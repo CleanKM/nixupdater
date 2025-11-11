@@ -1,35 +1,18 @@
 # Project Overview
 
-This project contains a single shell script, `update.sh`, designed to be a comprehensive update tool for various Linux distributions. The script automates the process of updating system packages, Flatpak and Snap applications, cleaning up the system, and checking for firmware or distribution upgrades.
+This project contains scripts for updating Linux and macOS systems.
 
-## Key Features
+## Directory Structure
 
-*   **Cross-Distribution Support:** Automatically detects the underlying Linux distribution and uses the appropriate package manager (`apt`, `dnf`, `pacman`, `apk`).
-*   **Comprehensive Updates:** Handles system packages, Flatpak, and Snap updates.
-*   **System Maintenance:** Cleans up unused packages and clears package caches.
-*   **Upgrade Checks:** Looks for distribution-level upgrades and firmware updates.
-*   **System Information:** Provides information on open ports.
+*   `linux/`: Contains the `update.sh` script for updating various Linux distributions.
+*   `macos/`: Contains the `update_macos.sh` script for updating macOS systems.
 
-# Building and Running
+## Scripts
 
-This is a standalone shell script and does not require a build process.
+### Linux
 
-## Running the script
+The `linux/update.sh` script is a comprehensive update tool for various Linux distributions. It automates the process of updating system packages, Flatpak and Snap applications, cleaning up the system, and checking for firmware or distribution upgrades.
 
-To run the script, you can execute it from your terminal:
+### macOS
 
-```bash
-./update.sh
-```
-
-Or, if it's not executable:
-
-```bash
-bash update.sh
-```
-
-The script requires `sudo` privileges for many of its operations and will prompt for a password if not run as root.
-
-# Development Conventions
-
-The script is written in `bash` and follows common shell scripting practices. It uses color codes for better readability of the output. It also attempts to install missing dependencies like `pv` for progress bars and `lsof` for listing open ports.
+The `macos/update_macos.sh` script is a comprehensive update tool for macOS. It automates the process of updating the operating system, Homebrew and MacPorts packages, and cleaning up the system.
