@@ -9,6 +9,13 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
+# --- Sudo check ---
+if [ "$EUID" -eq 0 ]; then
+    SUDO=""
+else
+    SUDO="sudo"
+fi
+
 # --- ASCII Art ---
 echo -e "${CYAN}"
 cat << "EOF"
@@ -91,16 +98,16 @@ echo -n -e "${BLUE}Checking for system updates...${NC}"
 (
 case "$PACKAGE_MANAGER" in
     "apt")
-        sudo apt update >/dev/null 2>&1
+        $SUDO apt update >/dev/null 2>&1
         ;;
     "dnf")
         # dnf check-update runs without sudo and is fast
         ;;
     "pacman")
-        sudo pacman -Sy >/dev/null 2>&1
+        $SUDO pacman -Sy >/dev/null 2>&1
         ;;
     "apk")
-        sudo apk update >/dev/null 2>&1
+        $SUDO apk update >/dev/null 2>&1
         ;;
 esac
 ) & 
@@ -137,9 +144,13 @@ fi
 SNAP_UPDATES=""
 if command -v snap &> /dev/null; then
     echo -n -e "${BLUE}Checking for Snap updates...${NC}"
-    SNAP_UPDATES_RAW=$( (sudo snap refresh --list 2>&1) ) &
-    spinner $!
-    wait $! # Ensure the command finishes before processing output
+    SNAP_OUTPUT_FILE=$(mktemp)
+    ( $SUDO snap refresh --list > "$SNAP_OUTPUT_FILE" 2>&1 ) &
+    SNAP_PID=$!
+    spinner $SNAP_PID
+    wait $SNAP_PID
+    SNAP_UPDATES_RAW=$(cat "$SNAP_OUTPUT_FILE")
+    rm "$SNAP_OUTPUT_FILE"
     SNAP_UPDATES=$(echo "$SNAP_UPDATES_RAW" | grep -v "All snaps are up to date." | tail -n +2)
     echo -e "${GREEN}Done!${NC}"
 else
@@ -159,16 +170,16 @@ if ! command -v pv &> /dev/null; then
     echo -e "${YELLOW}'pv' command not found. Attempting to install for progress bars...${NC}"
     case "$PACKAGE_MANAGER" in
         "apt")
-            sudo apt install -y pv
+            $SUDO apt install -y pv
             ;;
         "dnf")
-            sudo dnf install -y pv
+            $SUDO dnf install -y pv
             ;;
         "pacman")
-            sudo pacman -S --noconfirm pv
+            $SUDO pacman -S --noconfirm pv
             ;;
         "apk")
-            sudo apk add pv
+            $SUDO apk add pv
             ;;
     esac
 fi
@@ -186,9 +197,9 @@ DOCKER_CONTAINERS_TO_RESTART=""
 if command -v docker &> /dev/null; then
     if echo "$SYSTEM_UPDATES" | grep -q -e "docker" -e "containerd"; then
         echo -e "${YELLOW}Docker-related update found. Stopping running containers...${NC}"
-        DOCKER_CONTAINERS_TO_RESTART=$(sudo docker ps -q)
+        DOCKER_CONTAINERS_TO_RESTART=$($SUDO docker ps -q)
         if [ -n "$DOCKER_CONTAINERS_TO_RESTART" ]; then
-            sudo docker stop $DOCKER_CONTAINERS_TO_RESTART
+            $SUDO docker stop $DOCKER_CONTAINERS_TO_RESTART
             echo -e "${GREEN}Containers stopped.${NC}"
         else
             echo -e "${GREEN}No running containers to stop.${NC}"
@@ -220,30 +231,30 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
         case "$PACKAGE_MANAGER" in
             "apt")
                 if $USE_PV; then
-                    (sudo apt upgrade -y 2>&1) | pv -lep -s $(apt list --upgradable 2>/dev/null | wc -l) >/dev/null
+                    ($SUDO apt upgrade -y 2>&1) | pv -lep -s $(apt list --upgradable 2>/dev/null | wc -l) >/dev/null
                 else
-                    sudo apt upgrade -y
+                    $SUDO apt upgrade -y
                 fi
                 ;;
             "dnf")
                 if $USE_PV; then
-                     (sudo dnf upgrade -y 2>&1) | pv -lep -s $(dnf check-update | wc -l) >/dev/null
+                     ($SUDO dnf upgrade -y 2>&1) | pv -lep -s $(dnf check-update | wc -l) >/dev/null
                 else
-                     sudo dnf upgrade -y
+                     $SUDO dnf upgrade -y
                 fi
                 ;;
             "pacman")
                 if $USE_PV; then
-                    (sudo pacman -Syu --noconfirm 2>&1) | pv -lep -s $(pacman -Qu | wc -l) >/dev/null
+                    ($SUDO pacman -Syu --noconfirm 2>&1) | pv -lep -s $(pacman -Qu | wc -l) >/dev/null
                 else
-                    sudo pacman -Syu --noconfirm
+                    $SUDO pacman -Syu --noconfirm
                 fi
                 ;;
             "apk")
                 if $USE_PV; then
-                    (sudo apk upgrade 2>&1) | pv -lep -s $(apk list --upgradeable 2>/dev/null | wc -l) >/dev/null
+                    ($SUDO apk upgrade 2>&1) | pv -lep -s $(apk list --upgradeable 2>/dev/null | wc -l) >/dev/null
                 else
-                    sudo apk upgrade
+                    $SUDO apk upgrade
                 fi
                 ;;
         esac
@@ -252,7 +263,7 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
         # --- Docker Post-Update Restart ---
         if [ -n "$DOCKER_CONTAINERS_TO_RESTART" ]; then
             echo -e "${BLUE}Restarting previously running Docker containers...${NC}"
-            sudo docker start $DOCKER_CONTAINERS_TO_RESTART
+            $SUDO docker start $DOCKER_CONTAINERS_TO_RESTART
             echo -e "${GREEN}Containers restarted.${NC}"
         fi
     fi
@@ -268,27 +279,27 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
     # Snap Upgrade
     if [ -n "$SNAP_UPDATES" ]; then
         echo -e "${BLUE}Upgrading Snap packages...${NC}"
-        sudo snap refresh
+        $SUDO snap refresh
         echo -e "${GREEN}Snap upgrade complete.${NC}"
     fi
 fi
 
 echo ""
-echo -e "${MAGENTA}--- Cleaning up system ---${NC}"
+echo -e "${MAGENTA}--- Cleaning up system ---"${NC}
 
 # Autoremove unnecessary packages
 echo -e "${BLUE}Removing unnecessary packages...${NC}"
 case "$PACKAGE_MANAGER" in
     "apt")
-        sudo apt autoremove -y
+        $SUDO apt autoremove -y
         ;;
     "dnf")
-        sudo dnf autoremove -y
+        $SUDO dnf autoremove -y
         ;;
     "pacman")
         # First, find orphaned packages, then remove them if any exist.
-        if [[ -n $(pacman -Qdtq) ]]; then
-            sudo pacman -Rns $(pacman -Qdtq) --noconfirm
+        if [[ -n $($SUDO pacman -Qdtq) ]]; then
+            $SUDO pacman -Rns $($SUDO pacman -Qdtq) --noconfirm
         else
             echo "No orphaned packages to remove."
         fi
@@ -299,7 +310,7 @@ case "$PACKAGE_MANAGER" in
         if command -v apk &> /dev/null && command -v apk stats &> /dev/null; then
             UNREFERENCED_PKGS=$(apk stats --uninstalled --unreferenced)
             if [ -n "$UNREFERENCED_PKGS" ]; then
-                sudo apk del --purge $UNREFERENCED_PKGS
+                $SUDO apk del --purge $UNREFERENCED_PKGS
             else
                 echo "No unreferenced packages to remove."
             fi
@@ -314,22 +325,22 @@ echo -e "${GREEN}Done!${NC}"
 echo -e "${BLUE}Clearing package cache...${NC}"
 case "$PACKAGE_MANAGER" in
     "apt")
-        sudo apt clean
+        $SUDO apt clean
         ;;
     "dnf")
-        sudo dnf clean all
+        $SUDO dnf clean all
         ;;
     "pacman")
-        sudo pacman -Scc --noconfirm
+        $SUDO pacman -Scc --noconfirm
         ;;
     "apk")
-        sudo apk cache clean
+        $SUDO apk cache clean
         ;;
 esac
 echo -e "${GREEN}Done!${NC}"
 
 echo ""
-echo -e "${MAGENTA}--- Distribution Upgrade Check ---${NC}"
+echo -e "${MAGENTA}--- Distribution Upgrade Check ---"${NC}
 case "$PACKAGE_MANAGER" in
     "apt")
         # Flag to see if we found an upgrade
@@ -337,12 +348,12 @@ case "$PACKAGE_MANAGER" in
         # First, try the Ubuntu/Ubuntu-like method silently
         if command -v do-release-upgrade &> /dev/null; then
             echo -e "${BLUE}Checking for a new distribution release (do-release-upgrade)...${NC}"
-            UPGRADE_CHECK=$(sudo do-release-upgrade -c 2>&1)
+            UPGRADE_CHECK=$($SUDO do-release-upgrade -c 2>&1)
             if echo "$UPGRADE_CHECK" | grep -q "New release"; then
                 RELEASE_INFO=$(echo "$UPGRADE_CHECK" | grep "New release")
                 echo -e "${YELLOW}A new distribution release is available: $RELEASE_INFO${NC}"
                 echo -e "${YELLOW}To upgrade, run the following command:${NC}"
-                echo -e "${CYAN}sudo do-release-upgrade${NC}"
+                echo -e "${CYAN}$SUDO do-release-upgrade${NC}"
                 UPGRADE_FOUND=true
             fi
         fi
@@ -350,7 +361,7 @@ case "$PACKAGE_MANAGER" in
         # If the first method didn't find anything, try the Debian/dist-upgrade method
         if [ "$UPGRADE_FOUND" = false ]; then
             echo -e "${BLUE}Checking for major package changes (apt dist-upgrade)...${NC}"
-            DIST_UPGRADE_CHECK=$(sudo apt -s dist-upgrade 2>&1)
+            DIST_UPGRADE_CHECK=$($SUDO apt -s dist-upgrade 2>&1)
             
             if echo "$DIST_UPGRADE_CHECK" | grep -q "upgraded, .* newly installed, .* to remove"; then
                 SUMMARY=$(echo "$DIST_UPGRADE_CHECK" | grep "upgraded, .* newly installed, .* to remove")
@@ -359,7 +370,7 @@ case "$PACKAGE_MANAGER" in
                     echo -e "${YELLOW}A distribution upgrade or major package change may be available.${NC}"
                     echo -e "${YELLOW}Summary: $SUMMARY${NC}"
                     echo -e "${YELLOW}To apply these changes, review them carefully and then run:${NC}"
-                    echo -e "${CYAN}sudo apt full-upgrade${NC}"
+                    echo -e "${CYAN}$SUDO apt full-upgrade${NC}"
                     UPGRADE_FOUND=true
                 fi
             fi
@@ -373,17 +384,17 @@ case "$PACKAGE_MANAGER" in
     "dnf")
         echo -e "${BLUE}For Fedora-based systems, distribution upgrades are done using the 'dnf-plugin-system-upgrade' plugin.${NC}"
         echo -e "${BLUE}To upgrade, you would typically run a command like:${NC}"
-        echo -e "${CYAN}sudo dnf system-upgrade download --releasever=<version>${NC}"
+        echo -e "${CYAN}$SUDO dnf system-upgrade download --releasever=<version>${NC}"
         echo -e "${BLUE}Please consult your distribution's official documentation for the correct version number and instructions.${NC}"
         ;;
     "pacman")
         echo -e "${BLUE}Your system uses a rolling release model.${NC}"
-        echo -e "${BLUE}Regular updates using 'sudo pacman -Syu' keep your system on the latest version.${NC}"
+        echo -e "${BLUE}Regular updates using '$SUDO pacman -Syu' keep your system on the latest version.${NC}"
         echo -e "${GREEN}Your distribution is continuously up to date.${NC}"
         ;;
     "apk")
         echo -e "${BLUE}Your system uses a rolling release model.${NC}"
-        echo -e "${BLUE}Regular updates using 'sudo apk upgrade' keep your system on the latest version.${NC}"
+        echo -e "${BLUE}Regular updates using '$SUDO apk upgrade' keep your system on the latest version.${NC}"
         echo -e "${BLUE}Major version upgrades for Alpine Linux typically involve manual changes to /etc/apk/repositories.${NC}"
         echo -e "${GREEN}Your distribution is continuously up to date.${NC}"
         ;;
@@ -394,35 +405,35 @@ case "$PACKAGE_MANAGER" in
 esac
 
 echo ""
-echo -e "${MAGENTA}--- Clearing Old Logs ---${NC}"
+echo -e "${MAGENTA}--- Clearing Old Logs ---"${NC}
 if command -v journalctl &> /dev/null; then
     echo -e "${BLUE}Using journalctl to clear logs older than 10 days...${NC}"
-    sudo journalctl --vacuum-time=10d
+    $SUDO journalctl --vacuum-time=10d
 else
     echo -e "${YELLOW}Warning: 'journalctl' not found. Using 'find' to clear logs from /var/log.${NC}"
     echo -e "${BLUE}Clearing .log and .gz files older than 10 days from /var/log...${NC}"
-    sudo find /var/log -type f -name "*.log" -mtime +10 -delete
-    sudo find /var/log -type f -name "*.gz" -mtime +10 -delete
+    $SUDO find /var/log -type f -name "*.log" -mtime +10 -delete
+    $SUDO find /var/log -type f -name "*.gz" -mtime +10 -delete
 fi
 echo -e "${GREEN}Old logs cleared.${NC}"
 
 echo ""
-echo -e "${MAGENTA}--- Firmware Update Check ---${NC}"
+echo -e "${MAGENTA}--- Firmware Update Check ---"${NC}
 if command -v fwupdmgr &> /dev/null; then
     echo -n -e "${BLUE}Refreshing firmware metadata...${NC}"
-    (sudo fwupdmgr refresh --force) >/dev/null 2>&1 &
+    ($SUDO fwupdmgr refresh --force) >/dev/null 2>&1 &
     spinner $!
     echo -e "${GREEN}Done!${NC}"
     
     echo -e "${BLUE}Checking for firmware updates...${NC}"
-    FIRMWARE_UPDATES=$(sudo fwupdmgr get-updates 2>&1)
+    FIRMWARE_UPDATES=$($SUDO fwupdmgr get-updates 2>&1)
     
     if echo "$FIRMWARE_UPDATES" | grep -q "No updatable devices"; then
         echo -e "${GREEN}No firmware updates available.${NC}"
     else
         echo -e "${YELLOW}Firmware updates available:${NC}"
         echo -e "${CYAN}$FIRMWARE_UPDATES${NC}"
-        echo -e "${YELLOW}To apply these updates, run 'sudo fwupdmgr update'.${NC}"
+        echo -e "${YELLOW}To apply these updates, run '$SUDO fwupdmgr update'.${NC}"
     fi
 else
     echo -e "${YELLOW}fwupdmgr not found. Skipping firmware update check.${NC}"
@@ -430,20 +441,23 @@ fi
 
 # --- Open Ports on System ---
 echo ""
-echo -e "${MAGENTA}--- Open Ports on System ---${NC}"
+echo -e "${MAGENTA}--- Open Ports on System ---"${NC}
 
 # Check for lsof and install if not present
 if ! command -v lsof &> /dev/null; then
     echo -e "${YELLOW}'lsof' command not found. Attempting to install...${NC}"
     case "$PACKAGE_MANAGER" in
         "apt")
-            sudo apt install -y lsof
+            $SUDO apt install -y lsof
             ;;
         "dnf")
-            sudo dnf install -y lsof
+            $SUDO dnf install -y lsof
             ;;
         "pacman")
-            sudo pacman -S --noconfirm lsof
+            $SUDO pacman -S --noconfirm lsof
+            ;;
+        "apk")
+            $SUDO apk add lsof
             ;;
     esac
 fi
@@ -451,7 +465,7 @@ fi
 # Now, list the ports if lsof is available
 if command -v lsof &> /dev/null; then
     echo -e "${BLUE}Listing listening TCP and UDP ports (PID/Command/Address:Port)...${NC}"
-    sudo lsof -i -P -n | grep LISTEN
+    $SUDO lsof -i -P -n | grep LISTEN
 else
     echo -e "${RED}Error: 'lsof' could not be installed. Cannot display open ports.${NC}"
 fi
