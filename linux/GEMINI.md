@@ -6,11 +6,11 @@ This project contains a single shell script, `update.sh`, designed to be a compr
 
 *   **Cross-Distribution Support:** Automatically detects the underlying Linux distribution and uses the appropriate package manager (`apt`, `dnf`, `pacman`, `apk`).
 *   **Comprehensive Updates:** Handles system packages, Flatpak, and Snap updates.
-*   **System Maintenance:** Cleans up unused packages and clears package caches.
+*   **System Maintenance:** Cleans up unused packages and clears package caches. For Alpine Linux, it notes that a direct 'autoremove' equivalent is not available.
 *   **Upgrade Checks:** Looks for distribution-level upgrades and firmware updates.
-*   **System Information:** Provides information on open ports.
+*   **System Information:** Provides information on open ports, using `lsof`, `ss`, or `netstat` as fallbacks.
 *   **Docker Integration:** If Docker is installed and a Docker-related package is being updated, the script will stop running containers before the update and restart them afterward.
-*   **Automatic Dependency Installation:** The script attempts to install `pv` for progress bars and `lsof` for listing open ports if they are not already present.
+*   **Automatic Dependency Installation:** The script attempts to install `pv` for progress bars and `lsof` for listing open ports if they are not already present, with improved error handling for installation failures.
 
 # Building and Running
 

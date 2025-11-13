@@ -8,7 +8,8 @@ This project contains a single shell script, `update_macos.sh`, designed to be a
 *   **Package Manager Support:** Supports both Homebrew and MacPorts for package updates.
 *   **Comprehensive Updates:** Handles system updates, Homebrew formulae and casks, and MacPorts packages.
 *   **System Maintenance:** Cleans up unused packages and clears package caches for both Homebrew and MacPorts.
-*   **System Information:** Provides information on open ports.
+*   **System Information:** Provides information on open ports, using `lsof` or `netstat` as fallbacks.
+*   **Robust Spinner:** Includes a more robust spinner function for better user experience during long operations.
 
 # Building and Running
 

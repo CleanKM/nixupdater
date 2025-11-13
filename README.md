@@ -19,12 +19,12 @@ This script is a robust update tool for Linux distributions. It intelligently de
 
 *   **Cross-Distribution Support:** Automatically identifies the Linux distribution (e.g., Ubuntu, Fedora, Arch, Alpine) and utilizes `apt`, `dnf`, `pacman`, or `apk` accordingly.
 *   **Comprehensive Updates:** Manages updates for system packages, Flatpak applications, and Snap packages.
-*   **System Maintenance:** Includes routines for removing unnecessary packages (`autoremove`) and clearing package caches.
+*   **System Maintenance:** Includes routines for removing unnecessary packages (`autoremove`) and clearing package caches. For Alpine Linux, it notes that a direct 'autoremove' equivalent is not available.
 *   **Upgrade Checks:** Notifies about available distribution-level upgrades and firmware updates (via `fwupdmgr`).
 *   **Log Cleanup:** Clears old system logs to free up space.
-*   **Open Ports:** Lists currently open TCP and UDP ports on the system.
+*   **Open Ports:** Lists currently open TCP and UDP ports on the system, using `lsof`, `ss`, or `netstat` as fallbacks.
 *   **Docker Integration:** Stops Docker containers before system updates if Docker-related packages are being updated, and restarts them afterward.
-*   **Progress Bars:** Attempts to install `pv` (Pipe Viewer) to display progress bars during package upgrades.
+*   **Progress Bars & Dependency Handling:** Attempts to install `pv` (Pipe Viewer) for progress bars and `lsof` for listing open ports, with improved error handling for installation failures.
 
 **Usage:**
 
@@ -55,7 +55,8 @@ This script is designed to keep your macOS system and its installed software up-
 *   **MacPorts Integration:** Manages updates for MacPorts packages.
 *   **System Maintenance:** Cleans up Homebrew and MacPorts caches and removes inactive packages.
 *   **Log Cleanup:** Clears old log files from common macOS log directories.
-*   **Open Ports:** Lists currently open TCP and UDP ports on the system using `lsof`.
+*   **Open Ports:** Lists currently open TCP and UDP ports on the system, using `lsof` or `netstat` as fallbacks.
+*   **Robust Spinner:** Includes a more robust spinner function for better user experience during long operations.
 
 **Usage:**
 
