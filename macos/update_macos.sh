@@ -78,6 +78,31 @@ if [ ${#PACKAGE_MANAGERS[@]} -eq 0 ]; then
 else
     echo -e "${BLUE}Using package managers: ${GREEN}${PACKAGE_MANAGERS[*]}${NC}"
 fi
+
+# --- App Store CLI (mas) Detection ---
+MAS_INSTALLED=false
+if command -v mas &> /dev/null; then
+    MAS_INSTALLED=true
+    echo -e "${BLUE}Found Mac App Store CLI: ${GREEN}mas${NC}"
+else
+    echo -e "${YELLOW}Mac App Store CLI 'mas' not found.${NC}"
+    if [[ " ${PACKAGE_MANAGERS[*]} " =~ " brew " ]]; then
+        echo -e "${YELLOW}Do you want to install 'mas' using Homebrew to manage App Store apps? (y/n)${NC}"
+        read -r response
+        if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+            echo -e "${BLUE}Installing 'mas'...${NC}"
+            brew install mas
+            if command -v mas &> /dev/null; then
+                MAS_INSTALLED=true
+                echo -e "${GREEN}'mas' installed successfully.${NC}"
+            else
+                echo -e "${RED}Failed to install 'mas'. Skipping App Store updates.${NC}"
+            fi
+        else
+            echo -e "${YELLOW}Skipping 'mas' installation. App Store apps will not be updated.${NC}"
+        fi
+    fi
+fi
 echo ""
 
 # --- Update Checking ---
@@ -101,6 +126,13 @@ if [[ " ${PACKAGE_MANAGERS[*]} " =~ " brew " ]]; then
     echo -e "${GREEN}Done!${NC}"
 fi
 
+MAS_UPDATES=""
+if [ "$MAS_INSTALLED" = true ]; then
+    echo -n -e "${BLUE}Checking for App Store updates...${NC}"
+    MAS_UPDATES=$(mas outdated)
+    echo -e "${GREEN}Done!${NC}"
+fi
+
 PORT_UPDATES=""
 if [[ " ${PACKAGE_MANAGERS[*]} " =~ " port " ]]; then
     echo -n -e "${BLUE}Checking for MacPorts updates...${NC}"
@@ -112,14 +144,15 @@ fi
 echo ""
 
 # --- List Updates and Upgrade ---
-if [ -z "$SYSTEM_UPDATES" ] && [ -z "$BREW_UPDATES" ] && [ -z "$BREW_CASK_UPDATES" ] && [ -z "$PORT_UPDATES" ]; then
+if [ -z "$SYSTEM_UPDATES" ] && [ -z "$BREW_UPDATES" ] && [ -z "$BREW_CASK_UPDATES" ] && [ -z "$PORT_UPDATES" ] && [ -z "$MAS_UPDATES" ]; then
     echo -e "${GREEN}=========================${NC}"
     echo -e "${GREEN} Your system is up to date. ${NC}"
     echo -e "${GREEN}=========================${NC}
 fi
 
 # --- Upgrade ---
-if [ -n "$SYSTEM_UPDATES" ] || [ -n "$BREW_UPDATES" ] || [ -n "$BREW_CASK_UPDATES" ] || [ -n "$PORT_UPDATES" ]; then
+REBOOT_NEEDED_AFTER_UPDATE=false
+if [ -n "$SYSTEM_UPDATES" ] || [ -n "$BREW_UPDATES" ] || [ -n "$BREW_CASK_UPDATES" ] || [ -n "$PORT_UPDATES" ] || [ -n "$MAS_UPDATES" ]; then
     echo -e "${YELLOW}--- Pending Updates ---${NC}"
     if [ -n "$SYSTEM_UPDATES" ]; then
         echo -e "${CYAN}--- macOS Updates ---${NC}"
@@ -132,6 +165,10 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$BREW_UPDATES" ] || [ -n "$BREW_CASK_UPDATE
     if [ -n "$BREW_CASK_UPDATES" ]; then
         echo -e "${CYAN}--- Homebrew Cask Updates ---${NC}"
         echo "$BREW_CASK_UPDATES"
+    fi
+    if [ -n "$MAS_UPDATES" ]; then
+        echo -e "${CYAN}--- App Store Updates ---${NC}"
+        echo "$MAS_UPDATES"
     fi
     if [ -n "$PORT_UPDATES" ]; then
         echo -e "${CYAN}--- MacPorts Updates ---${NC}"
@@ -147,6 +184,10 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$BREW_UPDATES" ] || [ -n "$BREW_CASK_UPDATE
         if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
             echo -e "${BLUE}Upgrading macOS...${NC}"
             $SUDO softwareupdate -i -a
+            # Check if the updates we just installed required a restart
+            if echo "$SYSTEM_UPDATES" | grep -q -i "restart"; then
+                REBOOT_NEEDED_AFTER_UPDATE=true
+            fi
             echo -e "${GREEN}macOS upgrade complete.${NC}"
         else
             echo -e "${YELLOW}Skipping macOS updates.${NC}"
@@ -165,6 +206,14 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$BREW_UPDATES" ] || [ -n "$BREW_CASK_UPDATE
             brew upgrade --cask
             echo -e "${GREEN}Homebrew cask upgrade complete.${NC}"
         fi
+    fi
+
+    # App Store Upgrade
+    if [ "$MAS_INSTALLED" = true ] && [ -n "$MAS_UPDATES" ]; then
+        echo -e "${BLUE}Upgrading App Store applications...${NC}"
+        # The spinner is not ideal here as mas can prompt for password
+        mas upgrade
+        echo -e "${GREEN}App Store upgrade complete.${NC}"
     fi
 
     # MacPorts Upgrade
@@ -236,6 +285,15 @@ elif command -v netstat &> /dev/null; then
     $SUDO netstat -anv | grep LISTEN
 else
     echo -e "${RED}Error: Could not find lsof or netstat. Cannot display open ports.${NC}"
+fi
+
+# --- Reboot Check ---
+echo ""
+echo -e "${MAGENTA}--- Reboot Check ---${NC}"
+if [ "$REBOOT_NEEDED_AFTER_UPDATE" = true ]; then
+    echo -e "${YELLOW}A system reboot is required to complete the macOS updates.${NC}"
+else
+    echo -e "${GREEN}No reboot is required for the updates that were installed.${NC}"
 fi
 
 echo ""

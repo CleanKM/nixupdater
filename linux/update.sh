@@ -100,6 +100,42 @@ esac
 echo -e "${BLUE}Using package manager: ${GREEN}$PACKAGE_MANAGER${NC}"
 echo ""
 
+# --- Debian/Ubuntu Specific Checks ---
+if [ "$PACKAGE_MANAGER" = "apt" ]; then
+    echo -e "${MAGENTA}--- Debian/Ubuntu Specific Checks ---${NC}"
+
+    # Check for held packages
+    echo -n -e "${BLUE}Checking for held packages...${NC}"
+    HELD_PACKAGES=$(apt-mark showhold 2>/dev/null)
+    if [ -n "$HELD_PACKAGES" ]; then
+        echo -e "${YELLOW}Found held packages!${NC}"
+        echo -e "${CYAN}$HELD_PACKAGES${NC}"
+        echo -e "${YELLOW}These packages will NOT be upgraded.${NC}"
+    else
+        echo -e "${GREEN}Done! No held packages found.${NC}"
+    fi
+
+    # Check package integrity with debsums
+    if ! command -v debsums &> /dev/null; then
+        echo -e "${YELLOW}'debsums' command not found. It's a useful tool for checking package integrity.${NC}"
+        echo -e "${YELLOW}Do you want to install 'debsums'? (y/n)${NC}"
+        read -r response
+        if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+            echo -e "${BLUE}Installing 'debsums'...${NC}"
+            $SUDO apt install -y debsums >/dev/null 2>&1
+        fi
+    fi
+
+    if command -v debsums &> /dev/null; then
+        echo -n -e "${BLUE}Checking package integrity...${NC}"
+        # We only want to see files that have changed, so we filter out the OKs
+        CHANGED_FILES=$($SUDO debsums --changed 2>/dev/null)
+        echo -e "${GREEN}Done!${NC}"
+        [ -n "$CHANGED_FILES" ] && echo -e "${YELLOW}Found package files that have been modified:${NC}\n${CYAN}$CHANGED_FILES${NC}"
+    fi
+    echo ""
+fi
+
 # --- Update Checking ---
 echo -n -e "${BLUE}Checking for system updates...${NC}"
 (
@@ -279,7 +315,67 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
 fi
 
 echo ""
+echo -e "${MAGENTA}--- Reboot Check ---${NC}"
+REBOOT_NEEDED=false
+case "$PACKAGE_MANAGER" in
+    "apt")
+        if [ -f /var/run/reboot-required ]; then
+            REBOOT_NEEDED=true
+            REBOOT_REASON_PKGS=$(cat /var/run/reboot-required.pkgs 2>/dev/null)
+        fi
+        ;;
+    "dnf")
+        # needs-restarting is in dnf-utils
+        if ! command -v needs-restarting &> /dev/null; then
+            echo -e "${YELLOW}'needs-restarting' command not found. Attempting to install 'dnf-utils'...${NC}"
+            $SUDO dnf install -y dnf-utils >/dev/null 2>&1
+        fi
+        if command -v needs-restarting &> /dev/null; then
+            # Exit code 1 means reboot is required.
+            if $SUDO needs-restarting -r >/dev/null 2>&1; then
+                : # Exit code 0, no reboot needed
+            else
+                REBOOT_NEEDED=true
+            fi
+        fi
+        ;;
+esac
+
+if [ "$REBOOT_NEEDED" = true ]; then
+    echo -e "${YELLOW}A system reboot is required to complete the updates.${NC}"
+    [ -n "$REBOOT_REASON_PKGS" ] && echo -e "${YELLOW}Packages requiring reboot:${NC}\n${CYAN}$REBOOT_REASON_PKGS${NC}"
+else
+    echo -e "${GREEN}No reboot is required.${NC}"
+fi
+
+echo ""
 echo -e "${MAGENTA}--- Cleaning up system ---""${NC}"
+
+# Old Kernel Cleanup (Debian-based systems)
+if [ "$PACKAGE_MANAGER" = "apt" ]; then
+    echo -e "${BLUE}Checking for old kernels to remove...${NC}"
+    # Get the current kernel version to ensure we don't remove it
+    CURRENT_KERNEL=$(uname -r)
+    
+    # Find all installed kernel packages, excluding the current one
+    OLD_KERNELS=$(dpkg --list | grep -E 'linux-(image|headers)-[0-9]+' | awk '{ print $2 }' | grep -vF "$CURRENT_KERNEL")
+
+    if [ -n "$OLD_KERNELS" ]; then
+        echo -e "${YELLOW}Found old kernel packages that can be removed:${NC}"
+        echo -e "${CYAN}$OLD_KERNELS${NC}"
+        echo -e "${YELLOW}Do you want to remove these old kernels? (y/n)${NC}"
+        read -r response
+        if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+            echo -e "${BLUE}Removing old kernels...${NC}"
+            $SUDO apt-get purge -y $OLD_KERNELS
+            echo -e "${GREEN}Old kernels removed.${NC}"
+        else
+            echo -e "${YELLOW}Skipping old kernel removal.${NC}"
+        fi
+    else
+        echo -e "${GREEN}No old kernels found to remove.${NC}"
+    fi
+fi
 
 # Autoremove unnecessary packages
 echo -e "${BLUE}Removing unnecessary packages...${NC}"
