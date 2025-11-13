@@ -77,8 +77,8 @@ The script requires `sudo` privileges for some operations (like `softwareupdate`
 
 ## Contributing
 
-(Placeholder for contribution guidelines - e.g., "Feel free to open issues or submit pull requests.")
+Feel free to open issues or submit pull requests.
 
 ## License
 
-(Placeholder for license information - e.g., "This project is licensed under the MIT License.")
+This project is licensed under the MIT License.

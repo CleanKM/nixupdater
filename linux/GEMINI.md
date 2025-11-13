@@ -9,6 +9,8 @@ This project contains a single shell script, `update.sh`, designed to be a compr
 *   **System Maintenance:** Cleans up unused packages and clears package caches.
 *   **Upgrade Checks:** Looks for distribution-level upgrades and firmware updates.
 *   **System Information:** Provides information on open ports.
+*   **Docker Integration:** If Docker is installed and a Docker-related package is being updated, the script will stop running containers before the update and restart them afterward.
+*   **Automatic Dependency Installation:** The script attempts to install `pv` for progress bars and `lsof` for listing open ports if they are not already present.
 
 # Building and Running
 
@@ -32,4 +34,4 @@ The script requires `sudo` privileges for many of its operations and will prompt
 
 # Development Conventions
 
-The script is written in `bash` and follows common shell scripting practices. It uses color codes for better readability of the output. It also attempts to install missing dependencies like `pv` for progress bars and `lsof` for listing open ports.
+The script is written in `bash` and follows common shell scripting practices. It uses color codes for better readability of the output.
