@@ -31,17 +31,23 @@ This script is a robust update tool for Linux distributions. It intelligently de
 
 **Usage:**
 
+To quickly download and install the latest Linux update script:
+
+```bash
+mkdir -p nixupdater/linux && curl -o nixupdater/linux/update.sh https://raw.githubusercontent.com/CleanKM/nixupdater/main/linux/update.sh && chmod +x nixupdater/linux/update.sh
+```
+
 To run the Linux update script:
 
 ```bash
-cd linux/
+cd nixupdater/linux/
 ./update.sh
 ```
 
 Or, if it's not executable:
 
 ```bash
-cd linux/
+cd nixupdater/linux/
 bash update.sh
 ```
 
@@ -65,17 +71,23 @@ This script is designed to keep your macOS system and its installed software up-
 
 **Usage:**
 
+To quickly download and install the latest macOS update script:
+
+```bash
+mkdir -p nixupdater/macos && curl -o nixupdater/macos/update_macos.sh https://raw.githubusercontent.com/CleanKM/nixupdater/main/macos/update_macos.sh && chmod +x nixupdater/macos/update_macos.sh
+```
+
 To run the macOS update script:
 
 ```bash
-cd macos/
+cd nixupdater/macos/
 ./update_macos.sh
 ```
 
 Or, if it's not executable:
 
 ```bash
-cd macos/
+cd nixupdater/macos/
 bash update_macos.sh
 ```
 
