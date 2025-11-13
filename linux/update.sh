@@ -188,6 +188,10 @@ if ! command -v pv &> /dev/null; then
             $SUDO apk add pv
             ;;
     esac
+    # Verify pv installation
+    if ! command -v pv &> /dev/null; then
+        echo -e "${RED}Failed to install 'pv'. Progress bars will not be displayed.${NC}"
+    fi
 fi
 
 # Set USE_PV flag for later use
@@ -296,17 +300,9 @@ case "$PACKAGE_MANAGER" in
         ;;
     "apk")
         # apk does not have a direct 'autoremove' equivalent like apt/dnf.
-        # This command removes uninstalled and unreferenced packages.
-        if command -v apk &> /dev/null && command -v apk stats &> /dev/null; then
-            UNREFERENCED_PKGS=$(apk stats --uninstalled --unreferenced)
-            if [ -n "$UNREFERENCED_PKGS" ]; then
-                $SUDO apk del --purge "$UNREFERENCED_PKGS"
-            else
-                echo "No unreferenced packages to remove."
-            fi
-        else
-            echo "apk stats not found. Cannot remove unreferenced packages."
-        fi
+        # Users typically manage explicitly installed packages and their dependencies.
+        echo "apk does not have a direct 'autoremove' equivalent."
+        echo "Consider manually removing unneeded packages if necessary."
         ;;
 esac
 echo -e "${GREEN}Done!${NC}"
@@ -321,7 +317,7 @@ case "$PACKAGE_MANAGER" in
         $SUDO dnf clean all
         ;;
     "pacman")
-        $SUDO pacman -Scc --noconfirm
+        $SUDO pacman -Scc --noconfirm # -Scc removes all cached packages. Use -Sc to keep the latest versions.
         ;;
     "apk")
         $SUDO apk cache clean
@@ -450,6 +446,10 @@ if ! command -v lsof &> /dev/null; then
             $SUDO apk add lsof
             ;;
     esac
+    # Verify lsof installation
+    if ! command -v lsof &> /dev/null; then
+        echo -e "${RED}Failed to install 'lsof'. Open ports will not be displayed.${NC}"
+    fi
 fi
 
 # Now, list the ports if lsof is available
