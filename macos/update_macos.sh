@@ -33,7 +33,7 @@ cat << "EOF"
  \___/ |___| |_| |_____|_| \_\_____|_| \_\
 EOF
 echo -e "${NC}"
-echo -e "${MAGENTA}--- macOS System Update Script ---"${NC}
+echo -e "${MAGENTA}--- macOS System Update Script ---${NC}"
 echo ""
 
 # --- Spinner ---
@@ -41,7 +41,7 @@ spinner() {
     local pid=$1
     local delay=0.1
     local spinstr='|/-\'
-    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
+    while ps -p "$pid" > /dev/null; do
         local temp=${spinstr#?}
         printf " [%c]  " "$spinstr"
         local spinstr=$temp${spinstr%"$temp"}
@@ -115,26 +115,26 @@ echo ""
 if [ -z "$SYSTEM_UPDATES" ] && [ -z "$BREW_UPDATES" ] && [ -z "$BREW_CASK_UPDATES" ] && [ -z "$PORT_UPDATES" ]; then
     echo -e "${GREEN}=========================${NC}"
     echo -e "${GREEN} Your system is up to date. ${NC}"
-    echo -e "${GREEN}=========================${NC}"
+    echo -e "${GREEN}=========================${NC}
 fi
 
 # --- Upgrade ---
 if [ -n "$SYSTEM_UPDATES" ] || [ -n "$BREW_UPDATES" ] || [ -n "$BREW_CASK_UPDATES" ] || [ -n "$PORT_UPDATES" ]; then
-    echo -e "${YELLOW}--- Pending Updates ---"${NC}
+    echo -e "${YELLOW}--- Pending Updates ---${NC}"
     if [ -n "$SYSTEM_UPDATES" ]; then
-        echo -e "${CYAN}--- macOS Updates ---"${NC}
+        echo -e "${CYAN}--- macOS Updates ---${NC}"
         echo "$SYSTEM_UPDATES"
     fi
     if [ -n "$BREW_UPDATES" ]; then
-        echo -e "${CYAN}--- Homebrew Formulae Updates ---"${NC}
+        echo -e "${CYAN}--- Homebrew Formulae Updates ---${NC}"
         echo "$BREW_UPDATES"
     fi
     if [ -n "$BREW_CASK_UPDATES" ]; then
-        echo -e "${CYAN}--- Homebrew Cask Updates ---"${NC}
+        echo -e "${CYAN}--- Homebrew Cask Updates ---${NC}"
         echo "$BREW_CASK_UPDATES"
     fi
     if [ -n "$PORT_UPDATES" ]; then
-        echo -e "${CYAN}--- MacPorts Updates ---"${NC}
+        echo -e "${CYAN}--- MacPorts Updates ---${NC}"
         echo "$PORT_UPDATES"
     fi
     echo ""
@@ -178,7 +178,7 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$BREW_UPDATES" ] || [ -n "$BREW_CASK_UPDATE
 fi
 
 echo ""
-echo -e "${MAGENTA}--- Cleaning up system ---"${NC}
+echo -e "${MAGENTA}--- Cleaning up system ---${NC}"
 
 # Homebrew Cleanup
 if [[ " ${PACKAGE_MANAGERS[*]} " =~ " brew " ]]; then
@@ -211,7 +211,7 @@ fi
 
 
 echo ""
-echo -e "${MAGENTA}--- Clearing Old Logs ---"${NC}
+echo -e "${MAGENTA}--- Clearing Old Logs ---${NC}"
 if command -v log &> /dev/null; then
     echo -e "${BLUE}Using 'log' to clear logs older than 10 days...${NC}"
     # This is not a direct equivalent, as 'log' is for querying.
@@ -225,14 +225,17 @@ echo -e "${GREEN}Old logs cleared.${NC}"
 
 # --- Open Ports on System ---
 echo ""
-echo -e "${MAGENTA}--- Open Ports on System ---"${NC}
+echo -e "${MAGENTA}--- Open Ports on System ---${NC}"
 
 # Check for lsof
 if command -v lsof &> /dev/null; then
-    echo -e "${BLUE}Listing listening TCP and UDP ports (PID/Command/Address:Port)...${NC}"
+    echo -e "${BLUE}Listing listening TCP and UDP ports with lsof...${NC}"
     $SUDO lsof -i -P -n | grep LISTEN
+elif command -v netstat &> /dev/null; then
+    echo -e "${BLUE}lsof not found. Using 'netstat' to list listening TCP and UDP ports...${NC}"
+    $SUDO netstat -anv | grep LISTEN
 else
-    echo -e "${RED}Error: 'lsof' could not be found. Cannot display open ports.${NC}"
+    echo -e "${RED}Error: Could not find lsof or netstat. Cannot display open ports.${NC}"
 fi
 
 echo ""
