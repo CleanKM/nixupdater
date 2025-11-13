@@ -12,6 +12,8 @@ This project contains a single shell script, `update.sh`, designed to be a compr
 *   **System Information:** Provides information on open ports, using `lsof`, `ss`, or `netstat` as fallbacks.
 *   **Docker Integration:** If Docker is installed and a Docker-related package is being updated, the script will stop running containers before the update and restart them afterward.
 *   **Automatic Self-Update:** The script can check for and offer to install its own latest version from the GitHub repository.
+*   **Version Display:** Shows the script's current version at startup.
+*   **Simple Banner:** Displays a clean, informative banner instead of ASCII art.
 
 # Building and Running
 

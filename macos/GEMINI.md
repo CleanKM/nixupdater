@@ -10,6 +10,8 @@ This project contains a single shell script, `update_macos.sh`, designed to be a
 *   **System Maintenance:** Cleans up unused packages and clears package caches for both Homebrew and MacPorts.
 *   **System Information:** Provides information on open ports, using `lsof` or `netstat` as fallbacks.
 *   **Automatic Self-Update:** The script can check for and offer to install its own latest version from the GitHub repository.
+*   **Version Display:** Shows the script's current version at startup.
+*   **Simple Banner:** Displays a clean, informative banner instead of ASCII art.
 
 # Building and Running
 

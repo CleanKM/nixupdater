@@ -18,6 +18,9 @@ This script is a robust update tool for Linux distributions. It intelligently de
 **Key Features:**
 
 *   **Cross-Distribution Support:** Automatically identifies the Linux distribution (e.g., Ubuntu, Fedora, Arch, Alpine) and utilizes `apt`, `dnf`, `pacman`, or `apk` accordingly.
+*   **Enhanced Sudo Privilege Check:** Intelligently checks for sudo/root privileges, offering to relaunch the script with sudo if the user is in the sudo group.
+*   **Version Display:** Shows the script's current version at startup.
+*   **Simple Banner:** Displays a clean, informative banner instead of ASCII art.
 *   **Comprehensive Updates:** Manages updates for system packages, Flatpak applications, and Snap packages.
 *   **System Maintenance:** Includes routines for removing unnecessary packages (`autoremove`) and clearing package caches. For Alpine Linux, it notes that a direct 'autoremove' equivalent is not available.
 *   **Debian/Ubuntu Health Checks:** For Debian-based systems, it checks for held packages.
@@ -66,6 +69,8 @@ This script is designed to keep your macOS system and its installed software up-
 *   **Open Ports:** Lists currently open TCP and UDP ports on the system, using `lsof` or `netstat` as fallbacks.
 *   **Reboot Check:** Notifies you if a restart is required after installing macOS system updates.
 *   **Automatic Self-Update:** The script can check for and offer to install its own latest version from the GitHub repository.
+*   **Version Display:** Shows the script's current version at startup.
+*   **Simple Banner:** Displays a clean, informative banner instead of ASCII art.
 
 **Usage:**
 
