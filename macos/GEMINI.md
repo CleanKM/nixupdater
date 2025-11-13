@@ -4,7 +4,7 @@ This project contains a single shell script, `update_macos.sh`, designed to be a
 
 ## Key Features
 
-*   **macOS System Updates:** Checks for and installs macOS operating system updates.
+*   **macOS System Updates:** Checks for available macOS operating system updates. It prevents automatic installation of major OS upgrades and allows for individual confirmation of each recommended update.
 *   **Package Manager Support:** Supports both Homebrew and MacPorts for package updates.
 *   **Comprehensive Updates:** Handles system updates, Homebrew formulae and casks, and MacPorts packages.
 *   **System Maintenance:** Cleans up unused packages and clears package caches for both Homebrew and MacPorts.

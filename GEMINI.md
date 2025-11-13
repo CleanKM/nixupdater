@@ -15,4 +15,4 @@ The `linux/update.sh` script is a comprehensive update tool for various Linux di
 
 ### macOS
 
-The `macos/update_macos.sh` script is a comprehensive update tool for macOS. It automates the process of updating the operating system, Homebrew and MacPorts packages, and cleaning up the system.
+The `macos/update_macos.sh` script is a comprehensive update tool for macOS. It automates the process of updating the operating system (with user confirmation for individual updates and prevention of major OS upgrades), Homebrew and MacPorts packages, and cleaning up the system.

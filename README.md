@@ -53,7 +53,7 @@ This script is designed to keep your macOS system and its installed software up-
 
 **Key Features:**
 
-*   **macOS System Updates:** Checks for and optionally installs macOS operating system updates using `softwareupdate`.
+*   **macOS System Updates:** Checks for available macOS operating system updates. It prevents automatic installation of major OS upgrades and allows for individual confirmation of each recommended update.
 *   **Homebrew Integration:** Manages updates for Homebrew formulae and casks.
 *   **App Store Integration:** Checks for and installs updates for Mac App Store applications using `mas-cli` (will prompt to install if missing).
 *   **MacPorts Integration:** Manages updates for MacPorts packages.
