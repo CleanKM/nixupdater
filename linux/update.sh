@@ -452,12 +452,18 @@ if ! command -v lsof &> /dev/null; then
     fi
 fi
 
-# Now, list the ports if lsof is available
+# Now, list the ports
 if command -v lsof &> /dev/null; then
-    echo -e "${BLUE}Listing listening TCP and UDP ports (PID/Command/Address:Port)...${NC}"
+    echo -e "${BLUE}Listing listening TCP and UDP ports with lsof...${NC}"
     $SUDO lsof -i -P -n | grep LISTEN
+elif command -v ss &> /dev/null; then
+    echo -e "${BLUE}lsof not found. Using 'ss' to list listening TCP and UDP ports...${NC}"
+    $SUDO ss -tuln
+elif command -v netstat &> /dev/null; then
+    echo -e "${BLUE}lsof and ss not found. Using 'netstat' to list listening TCP and UDP ports...${NC}"
+    $SUDO netstat -tuln
 else
-    echo -e "${RED}Error: 'lsof' could not be installed. Cannot display open ports.${NC}"
+    echo -e "${RED}Error: Could not find lsof, ss, or netstat. Cannot display open ports.${NC}"
 fi
 
 echo ""
