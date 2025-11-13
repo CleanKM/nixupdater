@@ -147,7 +147,7 @@ echo ""
 if [ -z "$SYSTEM_UPDATES" ] && [ -z "$BREW_UPDATES" ] && [ -z "$BREW_CASK_UPDATES" ] && [ -z "$PORT_UPDATES" ] && [ -z "$MAS_UPDATES" ]; then
     echo -e "${GREEN}=========================${NC}"
     echo -e "${GREEN} Your system is up to date. ${NC}"
-    echo -e "${GREEN}=========================${NC}
+    echo -e "${GREEN}=========================${NC}"
 fi
 
 # --- Upgrade ---
@@ -179,19 +179,24 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$BREW_UPDATES" ] || [ -n "$BREW_CASK_UPDATE
 
     # System Upgrade
     if [ -n "$SYSTEM_UPDATES" ]; then
-        echo -e "${YELLOW}Do you want to install macOS updates? (y/n)${NC}"
-        read -r response
-        if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-            echo -e "${BLUE}Upgrading macOS...${NC}"
-            $SUDO softwareupdate -i -a
-            # Check if the updates we just installed required a restart
-            if echo "$SYSTEM_UPDATES" | grep -q -i "restart"; then
-                REBOOT_NEEDED_AFTER_UPDATE=true
+        echo "$SYSTEM_UPDATES" | while IFS= read -r line; do
+            label=$(echo "$line" | sed -E 's/^\s*\*\s*(.+)\s+\(.+\)\s+-.+/\1/')
+            if [ -n "$label" ]; then
+                echo -e "${YELLOW}Do you want to install update: ${BLUE}'$label'${YELLOW}? (y/n)${NC}"
+                read -r response_individual < /dev/tty
+                if [[ "$response_individual" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+                    echo -e "${BLUE}Installing update: '$label'...${NC}"
+                    $SUDO softwareupdate -i "$label"
+                    if echo "$line" | grep -q -i "restart"; then
+                        REBOOT_NEEDED_AFTER_UPDATE=true
+                    fi
+                    echo -e "${GREEN}Update '$label' complete.${NC}"
+                else
+                    echo -e "${YELLOW}Skipping update: '$label'.${NC}"
+                fi
             fi
-            echo -e "${GREEN}macOS upgrade complete.${NC}"
-        else
-            echo -e "${YELLOW}Skipping macOS updates.${NC}"
-        fi
+        done
+        echo -e "${GREEN}All macOS updates processed.${NC}"
     fi
 
     # Homebrew Upgrade
