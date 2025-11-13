@@ -466,16 +466,14 @@ else
     echo -e "${RED}Error: Could not find lsof, ss, or netstat. Cannot display open ports.${NC}"
 fi
 
-echo ""
-echo -e "${GREEN}=====================================${NC}"
-echo -e "${GREEN} All updates completed successfully! ${NC}"
-echo -e "${GREEN}=====================================${NC}"
-echo -e "${CYAN}"
+echo -e "${GREEN}"
 cat << "EOF"
-  _   _   _   _   _   _   _   _   _
- / \ / \ / \ / \ / \ / \ / \ / \ / \
-( C | o | m | p | l | e | t | e | d )
- \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/
+  ██████╗ ██╗   ██╗███████╗██████╗
+ ██╔════╝ ██║   ██║██╔════╝██╔══██╗
+ ██║      ██║   ██║█████╗  ██████╔╝
+ ██║      ╚██╗ ██╔╝██╔══╝  ██╔══██╗
+ ╚██████╗  ╚████╔╝ ███████╗██║  ██║
+  ╚═════╝   ╚═══╝  ╚══════╝╚═╝  ╚═╝
 EOF
 echo -e "${NC}"
 exit 0
