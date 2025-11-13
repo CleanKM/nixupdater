@@ -31,6 +31,7 @@ This script is a robust update tool for Linux distributions. It intelligently de
 *   **Open Ports:** Lists currently open TCP and UDP ports on the system, using `lsof`, `ss`, or `netstat` as fallbacks.
 *   **Docker Integration:** Stops Docker containers before system updates if Docker-related packages are being updated, and restarts them afterward.
 *   **Progress Bars & Dependency Handling:** Attempts to install `pv` (Pipe Viewer) for progress bars and `lsof` for listing open ports, with improved error handling for installation failures.
+*   **Enhanced Docker Integration:** Lists running Docker containers at startup. If Docker-related updates are available, it stops running containers (listing them and confirming their stop), and restarts them after the update is complete.
 
 **Usage:**
 

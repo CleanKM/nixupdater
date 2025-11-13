@@ -10,7 +10,7 @@ This project contains a single shell script, `update.sh`, designed to be a compr
 *   **System Maintenance:** Cleans up unused packages and clears package caches. For Alpine Linux, it notes that a direct 'autoremove' equivalent is not available.
 *   **Upgrade Checks:** Looks for distribution-level upgrades and firmware updates.
 *   **System Information:** Provides information on open ports, using `lsof`, `ss`, or `netstat` as fallbacks.
-*   **Docker Integration:** If Docker is installed and a Docker-related package is being updated, the script will stop running containers before the update and restart them afterward.
+*   **Enhanced Docker Integration:** Lists running Docker containers at startup. If Docker-related updates are available, it stops running containers (listing them and confirming their stop), and restarts them after the update is complete.
 *   **Automatic Self-Update:** The script can check for and offer to install its own latest version from the GitHub repository.
 *   **Version Display:** Shows the script's current version at startup.
 *   **Simple Banner:** Displays a clean, informative banner instead of ASCII art.

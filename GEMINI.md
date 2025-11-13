@@ -11,7 +11,7 @@ This project contains scripts for updating Linux and macOS systems.
 
 ### Linux
 
-The `linux/update.sh` script is a comprehensive update tool for various Linux distributions. It automates the process of updating system packages, Flatpak and Snap applications, cleaning up the system, checking for firmware or distribution upgrades. It also features an enhanced sudo privilege check, a self-update mechanism, and displays its version with a simple banner.
+The `linux/update.sh` script is a comprehensive update tool for various Linux distributions. It automates the process of updating system packages, Flatpak and Snap applications, cleaning up the system, checking for firmware or distribution upgrades. It also features an enhanced sudo privilege check, enhanced Docker integration, a self-update mechanism, and displays its version with a simple banner.
 
 ### macOS
 
