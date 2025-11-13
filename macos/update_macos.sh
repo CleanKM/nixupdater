@@ -20,21 +20,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.0"
-
-# --- Sudo check and prompt ---
-SUDO=''
-if [ "$EUID" -ne 0 ]; then
-    SUDO='sudo'
-    echo -e "${BLUE}This script requires sudo privileges to run.${NC}"
-    if ! sudo -v; then
-        echo -e "${RED}Failed to obtain sudo privileges. Exiting.${NC}"
-        exit 1
-    fi
-    echo -e "${GREEN}Sudo privileges obtained.${NC}"
-    # Keep-alive: update existing sudo time stamp if set, otherwise do nothing.
-    while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
-fi
+SCRIPT_VERSION="1.1"
 
 # --- Self-Update Check ---
 GITHUB_RAW_URL="https://raw.githubusercontent.com/CleanKM/nixupdater/main/macos/update_macos.sh"
@@ -79,6 +65,20 @@ else
             rm -f "$TEMP_SCRIPT_PATH"
         fi
     fi
+fi
+
+# --- Sudo check and prompt ---
+SUDO=''
+if [ "$EUID" -ne 0 ]; then
+    SUDO='sudo'
+    echo -e "${BLUE}This script requires sudo privileges to run.${NC}"
+    if ! sudo -v; then
+        echo -e "${RED}Failed to obtain sudo privileges. Exiting.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}Sudo privileges obtained.${NC}"
+    # Keep-alive: update existing sudo time stamp if set, otherwise do nothing.
+    while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
 fi
 
 # --- Script Banner ---
