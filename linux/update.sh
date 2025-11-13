@@ -20,6 +20,8 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
+SCRIPT_VERSION="1.0"
+
 # --- Sudo check and prompt ---
 SUDO=''
 if [ "$EUID" -ne 0 ]; then
@@ -110,17 +112,10 @@ else
     fi
 fi
 
-# --- ASCII Art ---
-echo -e "${CYAN}"
-cat << "EOF"
- _   _  ___ _____ _____ ____  _____ ____
-| | | ||_ _|_   _| ____|  _ \| ____|  _ \
-| | | | | |  | | |  _| | |_) |  _| | |_) |
-| |_| | | |  | | | |___|  _ <| |___|  _ <
- \___/ |___| |_| |_____|_| \_\_____|_| \_\
-EOF
-echo -e "${NC}"
-echo -e "${MAGENTA}--- System Update Script ---""${NC}"
+# --- Script Banner ---
+echo -e "${CYAN}------------------------------------------${NC}"
+echo -e "${CYAN}  Linux System Update Script - v${SCRIPT_VERSION}  ${NC}"
+echo -e "${CYAN}------------------------------------------${NC}"
 echo ""
 
 # --- Spinner ---
