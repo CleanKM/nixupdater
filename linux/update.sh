@@ -9,11 +9,18 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# --- Sudo check ---
-if [ "$EUID" -eq 0 ]; then
-    SUDO=""
-else
-    SUDO="sudo"
+# --- Sudo check and prompt ---
+SUDO=''
+if [ "$EUID" -ne 0 ]; then
+    SUDO='sudo'
+    echo -e "${BLUE}This script requires sudo privileges to run.${NC}"
+    if ! sudo -v; then
+        echo -e "${RED}Failed to obtain sudo privileges. Exiting.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}Sudo privileges obtained.${NC}"
+    # Keep-alive: update existing sudo time stamp if set, otherwise do nothing.
+    while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
 fi
 
 # --- ASCII Art ---
@@ -26,7 +33,7 @@ cat << "EOF"
  \___/ |___| |_| |_____|_| \_\_____|_| \_\
 EOF
 echo -e "${NC}"
-echo -e "${MAGENTA}--- System Update Script ---"${NC}
+echo -e "${MAGENTA}--- System Update Script ---""${NC}"
 echo ""
 
 # --- Spinner ---
@@ -34,7 +41,7 @@ spinner() {
     local pid=$1
     local delay=0.1
     local spinstr='|/-\'
-    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
+    while ps -p "$pid" > /dev/null; do
         local temp=${spinstr#?}
         printf " [%c]  " "$spinstr"
         local spinstr=$temp${spinstr%"$temp"}
@@ -134,8 +141,7 @@ esac
 FLATPAK_UPDATES=""
 if command -v flatpak &> /dev/null; then
     echo -n -e "${BLUE}Checking for Flatpak updates...${NC}"
-    FLATPAK_UPDATES=$(flatpak remote-ls --updates) &
-    spinner $!
+    FLATPAK_UPDATES=$(flatpak remote-ls --updates)
     echo -e "${GREEN}Done!${NC}"
 else
     echo -e "${YELLOW}Flatpak not found. Skipping Flatpak check.${NC}"
@@ -199,7 +205,7 @@ if command -v docker &> /dev/null; then
         echo -e "${YELLOW}Docker-related update found. Stopping running containers...${NC}"
         DOCKER_CONTAINERS_TO_RESTART=$($SUDO docker ps -q)
         if [ -n "$DOCKER_CONTAINERS_TO_RESTART" ]; then
-            $SUDO docker stop $DOCKER_CONTAINERS_TO_RESTART
+            $SUDO docker stop "$DOCKER_CONTAINERS_TO_RESTART"
             echo -e "${GREEN}Containers stopped.${NC}"
         else
             echo -e "${GREEN}No running containers to stop.${NC}"
@@ -209,17 +215,17 @@ fi
 
 # --- Upgrade ---
 if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES" ]; then
-    echo -e "${YELLOW}--- Pending Updates ---"${NC}
+    echo -e "${YELLOW}--- Pending Updates ---""${NC}"
     if [ -n "$SYSTEM_UPDATES" ]; then
-        echo -e "${CYAN}--- System Updates ---"${NC}
+        echo -e "${CYAN}--- System Updates ---""${NC}"
         echo "$SYSTEM_UPDATES"
     fi
     if [ -n "$FLATPAK_UPDATES" ]; then
-        echo -e "${CYAN}--- Flatpak Updates ---"${NC}
+        echo -e "${CYAN}--- Flatpak Updates ---""${NC}"
         echo "$FLATPAK_UPDATES"
     fi
     if [ -n "$SNAP_UPDATES" ]; then
-        echo -e "${CYAN}--- Snap Updates ---"${NC}
+        echo -e "${CYAN}--- Snap Updates ---""${NC}"
         echo "$SNAP_UPDATES"
     fi
     echo ""
@@ -230,32 +236,16 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
         echo -e "${BLUE}Upgrading system packages...${NC}"
         case "$PACKAGE_MANAGER" in
             "apt")
-                if $USE_PV; then
-                    ($SUDO apt upgrade -y 2>&1) | pv -lep -s $(apt list --upgradable 2>/dev/null | wc -l) >/dev/null
-                else
-                    $SUDO apt upgrade -y
-                fi
+                $SUDO apt upgrade -y
                 ;;
             "dnf")
-                if $USE_PV; then
-                     ($SUDO dnf upgrade -y 2>&1) | pv -lep -s $(dnf check-update | wc -l) >/dev/null
-                else
                      $SUDO dnf upgrade -y
-                fi
                 ;;
             "pacman")
-                if $USE_PV; then
-                    ($SUDO pacman -Syu --noconfirm 2>&1) | pv -lep -s $(pacman -Qu | wc -l) >/dev/null
-                else
                     $SUDO pacman -Syu --noconfirm
-                fi
                 ;;
             "apk")
-                if $USE_PV; then
-                    ($SUDO apk upgrade 2>&1) | pv -lep -s $(apk list --upgradeable 2>/dev/null | wc -l) >/dev/null
-                else
                     $SUDO apk upgrade
-                fi
                 ;;
         esac
         echo -e "${GREEN}System upgrade complete.${NC}"
@@ -263,7 +253,7 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
         # --- Docker Post-Update Restart ---
         if [ -n "$DOCKER_CONTAINERS_TO_RESTART" ]; then
             echo -e "${BLUE}Restarting previously running Docker containers...${NC}"
-            $SUDO docker start $DOCKER_CONTAINERS_TO_RESTART
+            $SUDO docker start "$DOCKER_CONTAINERS_TO_RESTART"
             echo -e "${GREEN}Containers restarted.${NC}"
         fi
     fi
@@ -285,7 +275,7 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
 fi
 
 echo ""
-echo -e "${MAGENTA}--- Cleaning up system ---"${NC}
+echo -e "${MAGENTA}--- Cleaning up system ---""${NC}"
 
 # Autoremove unnecessary packages
 echo -e "${BLUE}Removing unnecessary packages...${NC}"
@@ -299,7 +289,7 @@ case "$PACKAGE_MANAGER" in
     "pacman")
         # First, find orphaned packages, then remove them if any exist.
         if [[ -n $($SUDO pacman -Qdtq) ]]; then
-            $SUDO pacman -Rns $($SUDO pacman -Qdtq) --noconfirm
+            $SUDO pacman -Rns "$($SUDO pacman -Qdtq)" --noconfirm
         else
             echo "No orphaned packages to remove."
         fi
@@ -310,7 +300,7 @@ case "$PACKAGE_MANAGER" in
         if command -v apk &> /dev/null && command -v apk stats &> /dev/null; then
             UNREFERENCED_PKGS=$(apk stats --uninstalled --unreferenced)
             if [ -n "$UNREFERENCED_PKGS" ]; then
-                $SUDO apk del --purge $UNREFERENCED_PKGS
+                $SUDO apk del --purge "$UNREFERENCED_PKGS"
             else
                 echo "No unreferenced packages to remove."
             fi
@@ -340,7 +330,7 @@ esac
 echo -e "${GREEN}Done!${NC}"
 
 echo ""
-echo -e "${MAGENTA}--- Distribution Upgrade Check ---"${NC}
+echo -e "${MAGENTA}--- Distribution Upgrade Check ---""${NC}"
 case "$PACKAGE_MANAGER" in
     "apt")
         # Flag to see if we found an upgrade
@@ -405,7 +395,7 @@ case "$PACKAGE_MANAGER" in
 esac
 
 echo ""
-echo -e "${MAGENTA}--- Clearing Old Logs ---"${NC}
+echo -e "${MAGENTA}--- Clearing Old Logs ---""${NC}"
 if command -v journalctl &> /dev/null; then
     echo -e "${BLUE}Using journalctl to clear logs older than 10 days...${NC}"
     $SUDO journalctl --vacuum-time=10d
@@ -418,7 +408,7 @@ fi
 echo -e "${GREEN}Old logs cleared.${NC}"
 
 echo ""
-echo -e "${MAGENTA}--- Firmware Update Check ---"${NC}
+echo -e "${MAGENTA}--- Firmware Update Check ---""${NC}"
 if command -v fwupdmgr &> /dev/null; then
     echo -n -e "${BLUE}Refreshing firmware metadata...${NC}"
     ($SUDO fwupdmgr refresh --force) >/dev/null 2>&1 &
@@ -428,7 +418,7 @@ if command -v fwupdmgr &> /dev/null; then
     echo -e "${BLUE}Checking for firmware updates...${NC}"
     FIRMWARE_UPDATES=$($SUDO fwupdmgr get-updates 2>&1)
     
-    if echo "$FIRMWARE_UPDATES" | grep -q "No updatable devices"; then
+    if echo "$FIRMWARE_UPDATES" | grep -q "No updatable devices" || echo "$FIRMWARE_UPDATES" | grep -q "No updates available"; then
         echo -e "${GREEN}No firmware updates available.${NC}"
     else
         echo -e "${YELLOW}Firmware updates available:${NC}"
@@ -441,7 +431,7 @@ fi
 
 # --- Open Ports on System ---
 echo ""
-echo -e "${MAGENTA}--- Open Ports on System ---"${NC}
+echo -e "${MAGENTA}--- Open Ports on System ---""${NC}"
 
 # Check for lsof and install if not present
 if ! command -v lsof &> /dev/null; then
