@@ -5,6 +5,7 @@ This project contains a single shell script, `update.sh`, designed to be a compr
 ## Key Features
 
 *   **Cross-Distribution Support:** Automatically detects the underlying Linux distribution and uses the appropriate package manager (`apt`, `dnf`, `pacman`, `apk`).
+*   **Enhanced Sudo Privilege Check:** Intelligently checks for sudo/root privileges, offering to relaunch the script with sudo if the user is in the sudo group.
 *   **Comprehensive Updates:** Handles system packages, Flatpak, and Snap updates.
 *   **System Maintenance:** Cleans up unused packages and clears package caches. For Alpine Linux, it notes that a direct 'autoremove' equivalent is not available.
 *   **Upgrade Checks:** Looks for distribution-level upgrades and firmware updates.
