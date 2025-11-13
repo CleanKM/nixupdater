@@ -20,7 +20,7 @@ This script is a robust update tool for Linux distributions. It intelligently de
 *   **Cross-Distribution Support:** Automatically identifies the Linux distribution (e.g., Ubuntu, Fedora, Arch, Alpine) and utilizes `apt`, `dnf`, `pacman`, or `apk` accordingly.
 *   **Comprehensive Updates:** Manages updates for system packages, Flatpak applications, and Snap packages.
 *   **System Maintenance:** Includes routines for removing unnecessary packages (`autoremove`) and clearing package caches. For Alpine Linux, it notes that a direct 'autoremove' equivalent is not available.
-*   **Debian/Ubuntu Health Checks:** For Debian-based systems, it checks for held packages and verifies package integrity using `debsums` (will prompt to install if missing).
+*   **Debian/Ubuntu Health Checks:** For Debian-based systems, it checks for held packages.
 *   **Old Kernel Cleanup:** On Debian-based systems, it identifies and offers to remove old, unused kernels to free up disk space.
 *   **Reboot Check:** Checks if a system reboot is required after updates on Debian/Ubuntu and Fedora-based systems.
 *   **Upgrade Checks:** Notifies about available distribution-level upgrades and firmware updates (via `fwupdmgr`).

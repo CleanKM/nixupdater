@@ -115,24 +115,6 @@ if [ "$PACKAGE_MANAGER" = "apt" ]; then
         echo -e "${GREEN}Done! No held packages found.${NC}"
     fi
 
-    # Check package integrity with debsums
-    if ! command -v debsums &> /dev/null; then
-        echo -e "${YELLOW}'debsums' command not found. It's a useful tool for checking package integrity.${NC}"
-        echo -e "${YELLOW}Do you want to install 'debsums'? (y/n)${NC}"
-        read -r response
-        if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-            echo -e "${BLUE}Installing 'debsums'...${NC}"
-            $SUDO apt install -y debsums >/dev/null 2>&1
-        fi
-    fi
-
-    if command -v debsums &> /dev/null; then
-        echo -n -e "${BLUE}Checking package integrity...${NC}"
-        # We only want to see files that have changed, so we filter out the OKs
-        CHANGED_FILES=$($SUDO debsums --changed 2>/dev/null)
-        echo -e "${GREEN}Done!${NC}"
-        [ -n "$CHANGED_FILES" ] && echo -e "${YELLOW}Found package files that have been modified:${NC}\n${CYAN}$CHANGED_FILES${NC}"
-    fi
     echo ""
 fi
 
