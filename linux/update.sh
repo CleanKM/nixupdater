@@ -1,5 +1,16 @@
 #!/bin/bash
 
+# Function to get SHA256 checksum (cross-platform)
+get_sha256() {
+    if command -v sha256sum &> /dev/null; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum &> /dev/null; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        echo "" # Indicate failure
+    fi
+}
+
 # --- Color Codes ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -52,6 +63,51 @@ else
     # It means $EUID is not 0, but we didn't exit or relaunch.
     echo -e "${RED}Unexpected state: Script is not running as root. Exiting.${NC}"
     exit 1
+fi
+
+# --- Self-Update Check ---
+GITHUB_RAW_URL="https://raw.githubusercontent.com/CleanKM/nixupdater/main/linux/update.sh"
+SCRIPT_PATH="$(readlink -f "$0")" # Get absolute path of the current script
+TEMP_SCRIPT_PATH=$(mktemp)
+
+# Check if curl is available
+if ! command -v curl &> /dev/null; then
+    echo -e "${YELLOW}Warning: 'curl' not found. Cannot check for script updates.${NC}"
+else
+    # Download remote script
+    if ! curl -s "$GITHUB_RAW_URL" -o "$TEMP_SCRIPT_PATH"; then
+        echo -e "${RED}Error: Failed to download remote script for update check. Skipping self-update.${NC}"
+        rm -f "$TEMP_SCRIPT_PATH"
+    else
+        LOCAL_CHECKSUM=$(get_sha256 "$SCRIPT_PATH")
+        REMOTE_CHECKSUM=$(get_sha256 "$TEMP_SCRIPT_PATH")
+
+        if [ -z "$LOCAL_CHECKSUM" ] || [ -z "$REMOTE_CHECKSUM" ]; then
+            echo -e "${RED}Error: Checksum utility not found or failed. Skipping self-update.${NC}"
+            rm -f "$TEMP_SCRIPT_PATH"
+        elif [ "$LOCAL_CHECKSUM" != "$REMOTE_CHECKSUM" ]; then
+            echo -e "${YELLOW}A new version of the script is available!${NC}"
+            echo -e "${YELLOW}Do you want to update to the latest version? (y/n)${NC}"
+            read -r response < /dev/tty
+            if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+                echo -e "${BLUE}Updating script...${NC}"
+                if mv "$TEMP_SCRIPT_PATH" "$SCRIPT_PATH"; then
+                    chmod +x "$SCRIPT_PATH"
+                    echo -e "${GREEN}Script updated successfully. Relaunching...${NC}"
+                    exec "$SCRIPT_PATH" "$@" # Relaunch the updated script
+                else
+                    echo -e "${RED}Error: Failed to replace the script. Please update manually.${NC}"
+                    rm -f "$TEMP_SCRIPT_PATH"
+                fi
+            else
+                echo -e "${YELLOW}Skipping script update.${NC}"
+                rm -f "$TEMP_SCRIPT_PATH"
+            fi
+        else
+            echo -e "${GREEN}Script is already up to date.${NC}"
+            rm -f "$TEMP_SCRIPT_PATH"
+        fi
+    fi
 fi
 
 # --- ASCII Art ---

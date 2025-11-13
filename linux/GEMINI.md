@@ -10,7 +10,7 @@ This project contains a single shell script, `update.sh`, designed to be a compr
 *   **Upgrade Checks:** Looks for distribution-level upgrades and firmware updates.
 *   **System Information:** Provides information on open ports, using `lsof`, `ss`, or `netstat` as fallbacks.
 *   **Docker Integration:** If Docker is installed and a Docker-related package is being updated, the script will stop running containers before the update and restart them afterward.
-*   **Automatic Dependency Installation:** The script attempts to install `pv` for progress bars and `lsof` for listing open ports if they are not already present, with improved error handling for installation failures.
+*   **Automatic Self-Update:** The script can check for and offer to install its own latest version from the GitHub repository.
 
 # Building and Running
 
