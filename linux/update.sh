@@ -12,8 +12,34 @@ NC='\033[0m' # No Color
 # --- Sudo check and prompt ---
 SUDO=''
 if [ "$EUID" -ne 0 ]; then
-    SUDO='sudo'
+    # Not running as root
     echo -e "${BLUE}This script requires sudo privileges to run.${NC}"
+
+    if groups "$USER" | grep -q '\bsudo\b'; then
+        # User is in the sudo group, offer to relaunch
+        echo -e "${YELLOW}You are in the 'sudo' group. Do you want to relaunch this script with sudo? (y/n)${NC}"
+        read -r response < /dev/tty # Ensure read from tty
+        if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+            echo -e "${BLUE}Relaunching with sudo...${NC}"
+            exec sudo "$0" "$@" # Relaunch the script with sudo
+        else
+            echo -e "${RED}Sudo privileges declined. Exiting.${NC}"
+            exit 1
+        fi
+    else
+        # User is not in the sudo group
+        echo -e "${RED}You are not currently root or in the 'sudo' group. Exiting.${NC}"
+        exit 1
+    fi
+fi
+
+# If we reach here, the script is either already running as root,
+# or it was successfully relaunched with sudo.
+# In either case, $EUID should now be 0.
+
+if [ "$EUID" -eq 0 ]; then
+    SUDO='sudo' # Set SUDO for consistency, even if already root
+    # Verify sudo access (this will prompt for password if needed and not already cached)
     if ! sudo -v; then
         echo -e "${RED}Failed to obtain sudo privileges. Exiting.${NC}"
         exit 1
@@ -21,6 +47,11 @@ if [ "$EUID" -ne 0 ]; then
     echo -e "${GREEN}Sudo privileges obtained.${NC}"
     # Keep-alive: update existing sudo time stamp if set, otherwise do nothing.
     while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
+else
+    # This case should ideally not be reached if the logic above is correct.
+    # It means $EUID is not 0, but we didn't exit or relaunch.
+    echo -e "${RED}Unexpected state: Script is not running as root. Exiting.${NC}"
+    exit 1
 fi
 
 # --- ASCII Art ---
