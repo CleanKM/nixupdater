@@ -20,7 +20,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.2"
+SCRIPT_VERSION="1.3"
 
 # --- Self-Update Check ---
 GITHUB_RAW_URL="https://raw.githubusercontent.com/CleanKM/nixupdater/main/linux/update.sh"
@@ -318,31 +318,32 @@ DOCKER_CONTAINERS_TO_RESTART=""
 if command -v docker &> /dev/null; then
     if echo "$SYSTEM_UPDATES" | grep -q -e "docker" -e "containerd"; then
         echo -e "${YELLOW}Docker-related update found.${NC}"
-        RUNNING_CONTAINER_IDS=$($SUDO docker ps -q)
-        if [ -n "$RUNNING_CONTAINER_IDS" ]; then
-            echo -e "${BLUE}Stopping the following Docker containers for update:${NC}"
-            $SUDO docker ps --filter "id=$RUNNING_CONTAINER_IDS" --format "{{.Names}} ({{.ID}})"
-            
-            # Store IDs for restart
-            DOCKER_CONTAINERS_TO_RESTART="$RUNNING_CONTAINER_IDS"
+    RUNNING_CONTAINER_IDS=$($SUDO docker ps -q)
+    ALL_CONTAINER_IDS=$($SUDO docker ps -a -q)
+    if [ -n "$ALL_CONTAINER_IDS" ]; then
+        echo -e "${BLUE}Stopping all Docker containers for update:${NC}"
+        $SUDO docker ps --filter "id=$ALL_CONTAINER_IDS" --format "{{.Names}} ({{.ID}})"
 
-            # Stop containers
-            if $SUDO docker stop "$RUNNING_CONTAINER_IDS"; then
-                echo -e "${GREEN}Containers stopped successfully.${NC}"
-                # Verify stop
-                STOPPED_CONTAINERS_CHECK=$($SUDO docker ps -q --filter "id=$RUNNING_CONTAINER_IDS")
-                if [ -z "$STOPPED_CONTAINERS_CHECK" ]; then
-                    echo -e "${GREEN}Confirmed: All specified containers are stopped.${NC}"
-                else
-                    echo -e "${YELLOW}Warning: Some containers might still be running after stop attempt: ${STOPPED_CONTAINERS_CHECK}${NC}"
-                fi
+        # Store IDs for restart
+        DOCKER_CONTAINERS_TO_RESTART="$RUNNING_CONTAINER_IDS"
+
+        # Stop containers
+        if $SUDO docker stop "$ALL_CONTAINER_IDS"; then
+            echo -e "${GREEN}Containers stopped successfully.${NC}"
+            # Verify stop
+            STOPPED_CONTAINERS_CHECK=$($SUDO docker ps -q --filter "id=$ALL_CONTAINER_IDS")
+            if [ -z "$STOPPED_CONTAINERS_CHECK" ]; then
+                echo -e "${GREEN}Confirmed: All containers are stopped.${NC}"
             else
-                echo -e "${RED}Error: Failed to stop Docker containers. Proceeding with update, but containers might be affected.${NC}"
-                DOCKER_CONTAINERS_TO_RESTART="" # Clear for restart if stop failed
+                echo -e "${YELLOW}Warning: Some containers might still be running after stop attempt: ${STOPPED_CONTAINERS_CHECK}${NC}"
             fi
         else
-            echo -e "${GREEN}No running Docker containers to stop.${NC}"
+            echo -e "${RED}Error: Failed to stop Docker containers. Proceeding with update, but containers might be affected.${NC}"
+            DOCKER_CONTAINERS_TO_RESTART="" # Clear for restart if stop failed
         fi
+    else
+        echo -e "${GREEN}No Docker containers to stop.${NC}"
+    fi
     fi
 fi
 

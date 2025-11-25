@@ -1,40 +1,36 @@
-# Project Overview
+# Linux Updater Script (`update.sh`)
 
-This project contains a single shell script, `update.sh`, designed to be a comprehensive update tool for various Linux distributions. The script automates the process of updating system packages, Flatpak and Snap applications, cleaning up the system, and checking for firmware or distribution upgrades.
+This project contains the `update.sh` script, a comprehensive tool for updating various Linux distributions. It automates system package updates, manages Flatpak and Snap applications, and performs system maintenance.
 
 ## Key Features
 
-*   **Cross-Distribution Support:** Automatically detects the underlying Linux distribution and uses the appropriate package manager (`apt`, `dnf`, `pacman`, `apk`).
-*   **Enhanced Sudo Privilege Check:** Intelligently checks for sudo/root privileges, offering to relaunch the script with sudo if the user is in the sudo group.
-*   **Comprehensive Updates:** Handles system packages, Flatpak, and Snap updates.
-*   **System Maintenance:** Cleans up unused packages and clears package caches. For Alpine Linux, it notes that a direct 'autoremove' equivalent is not available.
-*   **Upgrade Checks:** Looks for distribution-level upgrades and firmware updates.
-*   **System Information:** Provides information on open ports, using `lsof`, `ss`, or `netstat` as fallbacks.
-*   **Enhanced Docker Integration:** Lists running Docker containers at startup. If Docker-related updates are available, it stops running containers (listing them and confirming their stop), and restarts them after the update is complete.
-*   **Automatic Self-Update:** The script can check for and offer to install its own latest version from the GitHub repository.
-*   **Version Display:** Shows the script's current version at startup.
-*   **Simple Banner:** Displays a clean, informative banner instead of ASCII art.
+*   **Cross-Distribution Support:** Automatically detects the distribution and uses the appropriate package manager (`apt`, `dnf`, `pacman`, `apk`).
+*   **Sudo Privilege Check:** Intelligently handles `sudo` privileges, relaunching itself if necessary.
+*   **Comprehensive Updates:** Manages system packages, Flatpak, and Snap updates in a single run.
+*   **System Maintenance:** Cleans unused packages and clears package caches.
+*   **Upgrade Checks:** Notifies about distribution-level upgrades and firmware updates.
+*   **System Information:** Displays open ports using `lsof`, `ss`, or `netstat`.
+*   **Docker Integration:** Lists running Docker containers and manages their lifecycle during updates.
+*   **Self-Update:** Automatically checks for and installs the latest version from the GitHub repository.
+*   **Version Display:** Shows the current script version.
+*   **Banner:** Displays a clean, informative startup banner.
 
 # Building and Running
 
-This is a standalone shell script and does not require a build process.
+The script is standalone and requires no build process.
 
-## Running the script
+## Running the Script
 
-To run the script, you can execute it from your terminal:
-
+Execute it from your terminal:
 ```bash
 ./update.sh
 ```
-
-Or, if it's not executable:
-
+Or, if not executable:
 ```bash
 bash update.sh
 ```
-
-The script requires `sudo` privileges for many of its operations and will prompt for a password if not run as root.
+The script requires `sudo` privileges for most operations and will prompt for a password if needed.
 
 # Development Conventions
 
-The script is written in `bash` and follows common shell scripting practices. It uses color codes for better readability of the output.
+The script is written in `bash` and uses color codes for improved output readability.
