@@ -14,6 +14,11 @@ This project contains the `update.sh` script, a comprehensive tool for updating 
 *   **Self-Update:** Automatically checks for and installs the latest version from the GitHub repository.
 *   **Version Display:** Shows the current script version.
 *   **Banner:** Displays a clean, informative startup banner.
+## Robustness Improvements (v1.4+)
+
+*   **Non-Interactive Safety:** Interactive prompts (self-update confirmation, sudo relaunch) now safely default to 'no' when run in non-TTY environments (e.g., cron jobs).
+*   **Dependency Installation Feedback:** Improved success/failure reporting when installing required utilities like `pv` and `lsof`.
+
 
 # Building and Running
 

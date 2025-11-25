@@ -45,8 +45,19 @@ else
         elif [ "$LOCAL_CHECKSUM" != "$REMOTE_CHECKSUM" ]; then
             echo -e "${YELLOW}A new version of the script is available!${NC}"
             echo -e "${YELLOW}Do you want to update to the latest version? (y/n)${NC}"
-            read -r response < /dev/tty
-            if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+            RESPONSE_IS_YES=false
+            if [ -t 1 ]; then
+                read -r response < /dev/tty
+                if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+                    RESPONSE_IS_YES=true
+                else
+                    echo -e "${YELLOW}Non-interactive mode detected. Skipping script update.${NC}"
+                fi
+            else
+                echo -e "${YELLOW}Non-interactive mode detected. Skipping script update.${NC}"
+            fi
+
+            if [ "$RESPONSE_IS_YES" = true ]; then
                 echo -e "${BLUE}Updating script...${NC}"
                 if mv "$TEMP_SCRIPT_PATH" "$SCRIPT_PATH"; then
                     chmod +x "$SCRIPT_PATH"
@@ -76,8 +87,19 @@ if [ "$EUID" -ne 0 ]; then
     if groups "$USER" | grep -q '\bsudo\b'; then
         # User is in the sudo group, offer to relaunch
         echo -e "${YELLOW}You are in the 'sudo' group. Do you want to relaunch this script with sudo? (y/n)${NC}"
-        read -r response < /dev/tty # Ensure read from tty
-        if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+        RESPONSE_IS_YES=false
+        if [ -t 1 ]; then
+            read -r response < /dev/tty # Ensure read from tty
+            if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+                RESPONSE_IS_YES=true
+            else
+                echo -e "${YELLOW}Non-interactive mode detected. Sudo relaunch declined.${NC}"
+            fi
+        else
+            echo -e "${YELLOW}Non-interactive mode detected. Sudo relaunch declined.${NC}"
+        fi
+
+        if [ "$RESPONSE_IS_YES" = true ]; then
             echo -e "${BLUE}Relaunching with sudo...${NC}"
             exec sudo "$0" "$@" # Relaunch the script with sudo
         else
@@ -302,14 +324,16 @@ if ! command -v pv &> /dev/null; then
     # Verify pv installation
     if ! command -v pv &> /dev/null; then
         echo -e "${RED}Failed to install 'pv'. Progress bars will not be displayed.${NC}"
+        PV_INSTALL_SUCCESS=false
+    else
+        PV_INSTALL_SUCCESS=true
     fi
 fi
 
 # Set USE_PV flag for later use
-if command -v pv &> /dev/null; then
+if [ "$PV_INSTALL_SUCCESS" = true ]; then
     USE_PV=true
 else
-    echo -e "${RED}Failed to install 'pv'. Progress bars will not be displayed.${NC}"
     USE_PV=false
 fi
 
@@ -639,11 +663,14 @@ if ! command -v lsof &> /dev/null; then
     # Verify lsof installation
     if ! command -v lsof &> /dev/null; then
         echo -e "${RED}Failed to install 'lsof'. Open ports will not be displayed.${NC}"
+        LSOF_INSTALL_SUCCESS=false
+    else
+        LSOF_INSTALL_SUCCESS=true
     fi
 fi
 
 # Now, list the ports
-if command -v lsof &> /dev/null; then
+if [ "$LSOF_INSTALL_SUCCESS" = true ]; then
     echo -e "${BLUE}Listing listening TCP and UDP ports with lsof...${NC}"
     $SUDO lsof -i -P -n | grep LISTEN
 elif command -v ss &> /dev/null; then
