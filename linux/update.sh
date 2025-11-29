@@ -644,6 +644,7 @@ echo ""
 echo -e "${MAGENTA}--- Open Ports on System ---""${NC}"
 
 # Check for lsof and install if not present
+LSOF_INSTALL_SUCCESS=false
 if ! command -v lsof &> /dev/null; then
     echo -e "${YELLOW}'lsof' command not found. Attempting to install...${NC}"
     case "$PACKAGE_MANAGER" in
@@ -667,6 +668,9 @@ if ! command -v lsof &> /dev/null; then
     else
         LSOF_INSTALL_SUCCESS=true
     fi
+else
+    # lsof was found initially, confirm success
+    LSOF_INSTALL_SUCCESS=true
 fi
 
 # Now, list the ports
