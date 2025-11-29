@@ -18,6 +18,7 @@ This project contains the `update.sh` script, a comprehensive tool for updating 
 
 *   **Non-Interactive Safety:** Interactive prompts (self-update confirmation, sudo relaunch) now safely default to 'no' when run in non-TTY environments (e.g., cron jobs).
 *   **Dependency Installation Feedback:** Improved success/failure reporting when installing required utilities like `pv` and `lsof`.
+*   **Docker Container Handling:** Correctly stops and restarts multiple containers during Docker-related updates by properly formatting the container ID argument list.
 
 
 # Building and Running

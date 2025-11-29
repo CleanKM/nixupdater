@@ -20,7 +20,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.3"
+SCRIPT_VERSION="1.4"
 
 # --- Self-Update Check ---
 GITHUB_RAW_URL="https://raw.githubusercontent.com/CleanKM/nixupdater/main/linux/update.sh"
@@ -346,16 +346,16 @@ if command -v docker &> /dev/null; then
     ALL_CONTAINER_IDS=$($SUDO docker ps -a -q)
     if [ -n "$ALL_CONTAINER_IDS" ]; then
         echo -e "${BLUE}Stopping all Docker containers for update:${NC}"
-        $SUDO docker ps --filter "id=$ALL_CONTAINER_IDS" --format "{{.Names}} ({{.ID}})"
+        $SUDO docker ps -a --format "{{.Names}} ({{.ID}})"
 
         # Store IDs for restart
         DOCKER_CONTAINERS_TO_RESTART="$RUNNING_CONTAINER_IDS"
 
         # Stop containers
-        if $SUDO docker stop "$ALL_CONTAINER_IDS"; then
+        if $SUDO docker stop $ALL_CONTAINER_IDS; then
             echo -e "${GREEN}Containers stopped successfully.${NC}"
             # Verify stop
-            STOPPED_CONTAINERS_CHECK=$($SUDO docker ps -q --filter "id=$ALL_CONTAINER_IDS")
+            STOPPED_CONTAINERS_CHECK=$($SUDO docker ps -q)
             if [ -z "$STOPPED_CONTAINERS_CHECK" ]; then
                 echo -e "${GREEN}Confirmed: All containers are stopped.${NC}"
             else
@@ -411,7 +411,7 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
         # --- Docker Post-Update Restart ---
         if [ -n "$DOCKER_CONTAINERS_TO_RESTART" ]; then
             echo -e "${BLUE}Restarting previously running Docker containers...${NC}"
-            $SUDO docker start "$DOCKER_CONTAINERS_TO_RESTART"
+            $SUDO docker start $DOCKER_CONTAINERS_TO_RESTART
             echo -e "${GREEN}Containers restarted.${NC}"
         fi
     fi
