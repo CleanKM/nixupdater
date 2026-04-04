@@ -19,6 +19,7 @@ This project contains the `update.sh` script, a comprehensive tool for updating 
 *   **Non-Interactive Safety:** Interactive prompts (self-update confirmation, sudo relaunch) now safely default to 'no' when run in non-TTY environments (e.g., cron jobs).
 *   **Dependency Installation Feedback:** Improved success/failure reporting when installing required utilities like `pv` and `lsof`.
 *   **Docker Container Handling:** Correctly stops and restarts multiple containers during Docker-related updates by properly formatting the container ID argument list.
+*   **Docker Compose Awareness (v1.5+):** Intelligently differentiates between standalone `docker run` containers and composed environments, stopping and restarting them through their respective `.yml` lifecycle rules (`docker compose up -d`).
 
 
 # Building and Running
