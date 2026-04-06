@@ -471,7 +471,7 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
                 [ -n "$ID" ] && RESTART_STANDALONE+=("$ID")
             done
 
-            while [ ${#RESTART_COMPOSE[@]} -gt 0 ] || [ ${#RESTART_STANDALONE[@]} -gt 0 ]; then
+            while [ ${#RESTART_COMPOSE[@]} -gt 0 ] || [ ${#RESTART_STANDALONE[@]} -gt 0 ]; do
                 echo -e "\n${MAGENTA}--- Docker Post-Update Restart Menu ---${NC}"
                 echo -e "${BLUE}The following containers/projects were stopped and await restart:${NC}"
                 
