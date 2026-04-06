@@ -20,7 +20,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.6"
+SCRIPT_VERSION="1.7"
 
 # --- Self-Update Check ---
 GITHUB_RAW_URL="https://raw.githubusercontent.com/CleanKM/nixupdater/main/linux/update.sh"
@@ -330,26 +330,64 @@ if command -v docker &> /dev/null; then
         
         if [ -n "$COMPOSE_CONFIGS" ] || [ -n "$STANDALONE_CONTAINERS" ]; then
             echo -e "${YELLOW}Docker containers are currently running, but a Docker/containerd update is available.${NC}"
-            echo -e "${YELLOW}It is recommended to stop them before updating. Do you want to stop running Docker containers now? (y/n)${NC}"
-            RESPONSE_IS_YES=false
+            echo -e "${YELLOW}It is recommended to stop them before updating. Do you want to:${NC}"
+            echo -e "${CYAN}[1] Stop ALL running containers automatically${NC}"
+            echo -e "${CYAN}[2] Select which containers/projects to stop individually${NC}"
+            echo -e "${CYAN}[3] Skip stopping containers${NC}"
+            
+            STOP_MODE="1"
             if [ -t 1 ]; then
+                echo -n -e "${YELLOW}Enter your choice [1-3] (default 1): ${NC}"
                 read -r response < /dev/tty
-                if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-                    RESPONSE_IS_YES=true
-                fi
+                if [[ "$response" == "2" ]]; then STOP_MODE="2"; fi
+                if [[ "$response" == "3" ]]; then STOP_MODE="3"; fi
             else
-                echo -e "${YELLOW}Non-interactive mode detected. Stopping containers automatically.${NC}"
-                RESPONSE_IS_YES=true
+                echo -e "${YELLOW}Non-interactive mode detected. Defaulting to [1] (Stop ALL).${NC}"
             fi
 
-            if [ "$RESPONSE_IS_YES" = true ]; then
-                echo -e "${BLUE}Stopping Docker containers prior to update...${NC}"
+            if [ "$STOP_MODE" == "1" ] || [ "$STOP_MODE" == "2" ]; then
+                if [ "$STOP_MODE" == "2" ]; then
+                    # Interactive selection loop
+                    SELECTED_COMPOSE=""
+                    SELECTED_STANDALONE=""
+                    
+                    if [ -n "$COMPOSE_CONFIGS" ]; then
+                        echo -e "${BLUE}--- Select Compose Projects ---${NC}"
+                        while IFS= read -r CONF; do
+                            [ -z "$CONF" ] && continue
+                            echo -n -e "${CYAN}Stop Compose Project [$CONF]? (y/N): ${NC}"
+                            read -r ans < /dev/tty
+                            if [[ "$ans" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+                                SELECTED_COMPOSE="$SELECTED_COMPOSE$CONF\n"
+                            fi
+                        done <<< "$COMPOSE_CONFIGS"
+                        COMPOSE_CONFIGS=$(echo -e -n "$SELECTED_COMPOSE" | sed '/^$/d')
+                    fi
+                    
+                    if [ -n "$STANDALONE_CONTAINERS" ]; then
+                        echo -e "${BLUE}--- Select Standalone Containers ---${NC}"
+                        for ID in $STANDALONE_CONTAINERS; do
+                            [ -z "$ID" ] && continue
+                            CNAME=$($SUDO docker inspect --format="{{.Name}}" "$ID" 2>/dev/null)
+                            CNAME=${CNAME#/} # strip leading slash
+                            echo -n -e "${CYAN}Stop Standalone Container $CNAME ($ID)? (y/N): ${NC}"
+                            read -r ans < /dev/tty
+                            if [[ "$ans" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+                                SELECTED_STANDALONE="$SELECTED_STANDALONE$ID "
+                            fi
+                        done
+                        STANDALONE_CONTAINERS=$(echo -n "$SELECTED_STANDALONE" | xargs)
+                    fi
+                fi
+
+                echo -e "${BLUE}Stopping selected Docker containers prior to update...${NC}"
                 
                 # Stop Compose Projects
                 if [ -n "$COMPOSE_CONFIGS" ]; then
                     DOCKER_COMPOSE_TO_RESTART="$COMPOSE_CONFIGS"
                     echo -e "${CYAN}Stopping Docker Compose environments:${NC}"
                     while IFS= read -r CONF_FILES; do
+                        [ -z "$CONF_FILES" ] && continue
                         COMPOSE_ARGS=()
                         IFS=',' read -ra FILES <<< "$CONF_FILES"
                         for FILE in "${FILES[@]}"; do
@@ -421,24 +459,101 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
         echo -e "${GREEN}System upgrade complete.${NC}"
 
         # --- Docker Post-Update Restart ---
-        if [ -n "$DOCKER_COMPOSE_TO_RESTART" ]; then
-            echo -e "${BLUE}Restarting Compose environments...${NC}"
-            while IFS= read -r CONF_FILES; do
-                COMPOSE_ARGS=()
-                IFS=',' read -ra FILES <<< "$CONF_FILES"
-                for FILE in "${FILES[@]}"; do
-                    COMPOSE_ARGS+=("-f" "$FILE")
-                done
-                echo -e " ${CYAN}-> docker compose ${COMPOSE_ARGS[*]} up -d${NC}"
-                $SUDO docker compose "${COMPOSE_ARGS[@]}" up -d || true
+        if [ -n "$DOCKER_COMPOSE_TO_RESTART" ] || [ -n "$DOCKER_STANDALONE_TO_RESTART" ]; then
+            # Build restart items list
+            RESTART_COMPOSE=()
+            while IFS= read -r line; do
+                [ -n "$line" ] && RESTART_COMPOSE+=("$line")
             done <<< "$DOCKER_COMPOSE_TO_RESTART"
-            echo -e "${GREEN}Compose environments restarted.${NC}"
-        fi
 
-        if [ -n "$DOCKER_STANDALONE_TO_RESTART" ]; then
-            echo -e "${BLUE}Restarting previously running standalone Docker containers...${NC}"
-            $SUDO docker start $DOCKER_STANDALONE_TO_RESTART >/dev/null 2>&1
-            echo -e "${GREEN}Standalone containers restarted.${NC}"
+            RESTART_STANDALONE=()
+            for ID in $DOCKER_STANDALONE_TO_RESTART; do
+                [ -n "$ID" ] && RESTART_STANDALONE+=("$ID")
+            done
+
+            while [ ${#RESTART_COMPOSE[@]} -gt 0 ] || [ ${#RESTART_STANDALONE[@]} -gt 0 ]; then
+                echo -e "\n${MAGENTA}--- Docker Post-Update Restart Menu ---${NC}"
+                echo -e "${BLUE}The following containers/projects were stopped and await restart:${NC}"
+                
+                idx=1
+                item_map=() # array to correlate choice index back to type and value
+                
+                # Print Compose
+                for i in "${!RESTART_COMPOSE[@]}"; do
+                    echo -e "${CYAN}[$idx] Compose Project: ${RESTART_COMPOSE[$i]}${NC}"
+                    item_map[$idx]="compose|$i"
+                    ((idx++))
+                done
+                
+                # Print Standalone
+                for i in "${!RESTART_STANDALONE[@]}"; do
+                    ID="${RESTART_STANDALONE[$i]}"
+                    CNAME=$($SUDO docker inspect --format="{{.Name}}" "$ID" 2>/dev/null)
+                    CNAME=${CNAME#/}
+                    echo -e "${CYAN}[$idx] Standalone: $CNAME ($ID)${NC}"
+                    item_map[$idx]="standalone|$i"
+                    ((idx++))
+                done
+
+                echo -e "${GREEN}[a] Restart all remaining items automatically${NC}"
+                echo -e "${YELLOW}[d] Done (leave remaining items stopped)${NC}"
+                
+                if ! [ -t 1 ]; then
+                    echo -e "${YELLOW}Non-interactive mode. Auto-restarting all.${NC}"
+                    ans="a"
+                else
+                    echo -n -e "${YELLOW}Select an option to restart it now: ${NC}"
+                    read -r ans < /dev/tty
+                fi
+
+                if [[ "$ans" == "a" || "$ans" == "A" ]]; then
+                    # Bulk start remaining
+                    if [ ${#RESTART_COMPOSE[@]} -gt 0 ]; then
+                        echo -e "${BLUE}Restarting remaining Compose environments...${NC}"
+                        for CONF_FILES in "${RESTART_COMPOSE[@]}"; do
+                            COMPOSE_ARGS=()
+                            IFS=',' read -ra FILES <<< "$CONF_FILES"
+                            for FILE in "${FILES[@]}"; do COMPOSE_ARGS+=("-f" "$FILE"); done
+                            echo -e " ${CYAN}-> docker compose ${COMPOSE_ARGS[*]} up -d${NC}"
+                            $SUDO docker compose "${COMPOSE_ARGS[@]}" up -d || true
+                        done
+                    fi
+                    if [ ${#RESTART_STANDALONE[@]} -gt 0 ]; then
+                        echo -e "${BLUE}Restarting remaining standalone Docker containers...${NC}"
+                        $SUDO docker start "${RESTART_STANDALONE[@]}" >/dev/null 2>&1
+                    fi
+                    echo -e "${GREEN}All leftover containers restarted.${NC}"
+                    break
+                elif [[ "$ans" == "d" || "$ans" == "D" ]]; then
+                    echo -e "${YELLOW}Leaving remaining items stopped.${NC}"
+                    break
+                elif [[ "$ans" =~ ^[0-9]+$ ]] && [ "$ans" -ge 1 ] && [ "$ans" -lt "$idx" ]; then
+                    # Parse selection
+                    item_type="${item_map[$ans]%|*}"
+                    arr_idx="${item_map[$ans]#*|}"
+                    
+                    if [ "$item_type" == "compose" ]; then
+                        CONF_FILES="${RESTART_COMPOSE[$arr_idx]}"
+                        COMPOSE_ARGS=()
+                        IFS=',' read -ra FILES <<< "$CONF_FILES"
+                        for FILE in "${FILES[@]}"; do COMPOSE_ARGS+=("-f" "$FILE"); done
+                        echo -e "${BLUE}Starting Compose Project: $CONF_FILES${NC}"
+                        $SUDO docker compose "${COMPOSE_ARGS[@]}" up -d || true
+                        unset 'RESTART_COMPOSE[$arr_idx]'
+                        # Rebuild array to fix indices
+                        RESTART_COMPOSE=("${RESTART_COMPOSE[@]}")
+                    elif [ "$item_type" == "standalone" ]; then
+                        ID="${RESTART_STANDALONE[$arr_idx]}"
+                        echo -e "${BLUE}Starting Standalone Container: $ID${NC}"
+                        $SUDO docker start "$ID" >/dev/null 2>&1 || true
+                        unset 'RESTART_STANDALONE[$arr_idx]'
+                        RESTART_STANDALONE=("${RESTART_STANDALONE[@]}")
+                    fi
+                    echo -e "${GREEN}Item started!${NC}"
+                else
+                    echo -e "${RED}Invalid selection. Please try again.${NC}"
+                fi
+            done
         fi
     fi
 
