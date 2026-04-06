@@ -16,10 +16,10 @@ This project contains the `update.sh` script, a comprehensive tool for updating 
 *   **Banner:** Displays a clean, informative startup banner.
 ## Robustness Improvements (v1.4+)
 
-*   **Non-Interactive Safety:** Interactive prompts (self-update confirmation, sudo relaunch) now safely default to 'no' when run in non-TTY environments (e.g., cron jobs).
-*   **Dependency Installation Feedback:** Improved success/failure reporting when installing required utilities like `pv` and `lsof`.
-*   **Docker Container Handling:** Correctly stops and restarts multiple containers during Docker-related updates by properly formatting the container ID argument list.
-*   **Docker Compose Awareness (v1.5+):** Intelligently differentiates between standalone `docker run` containers and composed environments, stopping and restarting them through their respective `.yml` lifecycle rules (`docker compose up -d`).
+*   **Non-Interactive Safety:** Interactive prompts (container shutdown, self-update confirmation, sudo relaunch) safely fail open or default appropriately when run in non-TTY environments (e.g., cron jobs).
+*   **Dependency Installation Feedback:** Improved success/failure reporting when dynamically installing required utilities like `lsof`.
+*   **Docker Container Handling:** Prompts the user before taking down containers for system upgrades. Correctly stops and restarts multiple containers during Docker-related updates by enforcing a safe restart order (Compose projects first).
+*   **Docker Compose Awareness (v1.5+):** Intelligently categorizes and displays standalone `docker run` containers versus composed environments on the splash screen, and natively leverages `.yml` lifecycle rules (`docker compose up -d`) to manage them.
 
 
 # Building and Running

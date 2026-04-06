@@ -20,7 +20,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.5"
+SCRIPT_VERSION="1.6"
 
 # --- Self-Update Check ---
 GITHUB_RAW_URL="https://raw.githubusercontent.com/CleanKM/nixupdater/main/linux/update.sh"
@@ -118,15 +118,8 @@ fi
 # In either case, $EUID should now be 0.
 
 if [ "$EUID" -eq 0 ]; then
-    SUDO='sudo' # Set SUDO for consistency, even if already root
-    # Verify sudo access (this will prompt for password if needed and not already cached)
-    if ! sudo -v; then
-        echo -e "${RED}Failed to obtain sudo privileges. Exiting.${NC}"
-        exit 1
-    fi
+    SUDO='' # We are root, no need to prefix with sudo internally
     echo -e "${GREEN}Sudo privileges obtained.${NC}"
-    # Keep-alive: update existing sudo time stamp if set, otherwise do nothing.
-    while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
 else
     # This case should ideally not be reached if the logic above is correct.
     # It means $EUID is not 0, but we didn't exit or relaunch.
@@ -142,11 +135,21 @@ echo ""
 
 # --- Docker Container Status ---
 if command -v docker &> /dev/null; then
-    RUNNING_DOCKER_CONTAINERS=$($SUDO docker ps --format "{{.Names}} ({{.ID}})" 2>/dev/null)
-    if [ -n "$RUNNING_DOCKER_CONTAINERS" ]; then
+    # Standalone running:
+    STANDALONE_LIST=$($SUDO docker ps --filter "label!=com.docker.compose.project" --format "{{.Names}} ({{.ID}})" 2>/dev/null || true)
+    # Compose running:
+    COMPOSE_LIST=$($SUDO docker ps --filter "label=com.docker.compose.project" --format "{{.Names}} ({{.ID}}) [Compose Project: {{.Label \"com.docker.compose.project\"}}]" 2>/dev/null || true)
+    
+    if [ -n "$STANDALONE_LIST" ] || [ -n "$COMPOSE_LIST" ]; then
         echo -e "${MAGENTA}--- Running Docker Containers ---${NC}"
-        echo -e "${CYAN}The following Docker containers are currently running:${NC}"
-        echo -e "${CYAN}$RUNNING_DOCKER_CONTAINERS${NC}"
+        if [ -n "$COMPOSE_LIST" ]; then
+            echo -e "${CYAN}Docker Compose Containers:${NC}"
+            echo -e "${CYAN}$COMPOSE_LIST${NC}"
+        fi
+        if [ -n "$STANDALONE_LIST" ]; then
+            echo -e "${CYAN}Standalone Containers (docker run):${NC}"
+            echo -e "${CYAN}$STANDALONE_LIST${NC}"
+        fi
         echo ""
     fi
 fi
@@ -304,38 +307,6 @@ if [ -z "$SYSTEM_UPDATES" ] && [ -z "$FLATPAK_UPDATES" ] && [ -z "$SNAP_UPDATES"
     echo -e "${GREEN}=========================${NC}"
 fi
 
-# --- Install pv for progress bars if not present ---
-if ! command -v pv &> /dev/null; then
-    echo -e "${YELLOW}'pv' command not found. Attempting to install for progress bars...${NC}"
-    case "$PACKAGE_MANAGER" in
-        "apt")
-            $SUDO apt install -y pv
-            ;;
-        "dnf")
-            $SUDO dnf install -y pv
-            ;;
-        "pacman")
-            $SUDO pacman -S --noconfirm pv
-            ;;
-        "apk")
-            $SUDO apk add pv
-            ;;
-    esac
-    # Verify pv installation
-    if ! command -v pv &> /dev/null; then
-        echo -e "${RED}Failed to install 'pv'. Progress bars will not be displayed.${NC}"
-        PV_INSTALL_SUCCESS=false
-    else
-        PV_INSTALL_SUCCESS=true
-    fi
-fi
-
-# Set USE_PV flag for later use
-if [ "$PV_INSTALL_SUCCESS" = true ]; then
-    USE_PV=true
-else
-    USE_PV=false
-fi
 
 # --- Docker Pre-Update Check ---
 DOCKER_STANDALONE_TO_RESTART=""
@@ -344,47 +315,70 @@ if command -v docker &> /dev/null; then
     if echo "$SYSTEM_UPDATES" | grep -q -e "docker" -e "containerd"; then
         echo -e "${YELLOW}Docker-related update found.${NC}"
         
-        # 1. Identify Compose Project Configs
-        COMPOSE_CONFIGS=$($SUDO docker ps --format '{{ index .Labels "com.docker.compose.project.config_files" }}' | awk 'NF' | sort -u)
+        # 1. Identify Compose Project Configs (Running only)
+        COMPOSE_CONFIGS=$($SUDO docker ps --filter "label=com.docker.compose.project.config_files" --format '{{ index .Labels "com.docker.compose.project.config_files" }}' | awk 'NF' | sort -u)
         
-        # 2. Identify Standalone Containers
-        STANDALONE_CONTAINERS=$($SUDO docker ps -q --filter "label!=com.docker.compose.project.config_files")
-        ALL_STANDALONE=$($SUDO docker ps -a -q --filter "label!=com.docker.compose.project.config_files")
+        # 2. Identify Standalone Containers (Running only)
+        # First grab all running, then omit compose ones
+        ALL_RUNNING=$($SUDO docker ps -q)
+        COMPOSE_RUNNING=$($SUDO docker ps -q --filter "label=com.docker.compose.project.config_files")
+        if [ -n "$COMPOSE_RUNNING" ]; then
+            STANDALONE_CONTAINERS=$(echo "$ALL_RUNNING" | grep -vF -f <(echo "$COMPOSE_RUNNING") || true)
+        else
+            STANDALONE_CONTAINERS="$ALL_RUNNING"
+        fi
         
-        if [ -n "$COMPOSE_CONFIGS" ] || [ -n "$ALL_STANDALONE" ]; then
-            echo -e "${BLUE}Stopping Docker containers prior to update...${NC}"
-            
-            # Stop Compose Projects
-            if [ -n "$COMPOSE_CONFIGS" ]; then
-                DOCKER_COMPOSE_TO_RESTART="$COMPOSE_CONFIGS"
-                echo -e "${CYAN}Stopping Docker Compose environments:${NC}"
-                while IFS= read -r CONF_FILES; do
-                    COMPOSE_ARGS=()
-                    IFS=',' read -ra FILES <<< "$CONF_FILES"
-                    for FILE in "${FILES[@]}"; do
-                        COMPOSE_ARGS+=("-f" "$FILE")
-                    done
-                    echo -e " ${YELLOW}-> docker compose ${COMPOSE_ARGS[*]} stop${NC}"
-                    $SUDO docker compose "${COMPOSE_ARGS[@]}" stop || true
-                done <<< "$COMPOSE_CONFIGS"
-            fi
-            
-            # Stop Standalone Containers
-            if [ -n "$ALL_STANDALONE" ]; then
-                DOCKER_STANDALONE_TO_RESTART="$STANDALONE_CONTAINERS"
-                echo -e "${CYAN}Stopping standalone containers:${NC}"
-                $SUDO docker stop $ALL_STANDALONE >/dev/null 2>&1 || true
-            fi
-            
-            # Verify stop
-            REMAINING_RUNNING=$($SUDO docker ps -q)
-            if [ -z "$REMAINING_RUNNING" ]; then
-                echo -e "${GREEN}Confirmed: All containers are stopped.${NC}"
+        if [ -n "$COMPOSE_CONFIGS" ] || [ -n "$STANDALONE_CONTAINERS" ]; then
+            echo -e "${YELLOW}Docker containers are currently running, but a Docker/containerd update is available.${NC}"
+            echo -e "${YELLOW}It is recommended to stop them before updating. Do you want to stop running Docker containers now? (y/n)${NC}"
+            RESPONSE_IS_YES=false
+            if [ -t 1 ]; then
+                read -r response < /dev/tty
+                if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+                    RESPONSE_IS_YES=true
+                fi
             else
-                echo -e "${YELLOW}Warning: Some containers might still be running after stop attempt: ${REMAINING_RUNNING}${NC}"
+                echo -e "${YELLOW}Non-interactive mode detected. Stopping containers automatically.${NC}"
+                RESPONSE_IS_YES=true
+            fi
+
+            if [ "$RESPONSE_IS_YES" = true ]; then
+                echo -e "${BLUE}Stopping Docker containers prior to update...${NC}"
+                
+                # Stop Compose Projects
+                if [ -n "$COMPOSE_CONFIGS" ]; then
+                    DOCKER_COMPOSE_TO_RESTART="$COMPOSE_CONFIGS"
+                    echo -e "${CYAN}Stopping Docker Compose environments:${NC}"
+                    while IFS= read -r CONF_FILES; do
+                        COMPOSE_ARGS=()
+                        IFS=',' read -ra FILES <<< "$CONF_FILES"
+                        for FILE in "${FILES[@]}"; do
+                            COMPOSE_ARGS+=("-f" "$FILE")
+                        done
+                        echo -e " ${YELLOW}-> docker compose ${COMPOSE_ARGS[*]} stop${NC}"
+                        $SUDO docker compose "${COMPOSE_ARGS[@]}" stop || true
+                    done <<< "$COMPOSE_CONFIGS"
+                fi
+                
+                # Stop Standalone Containers
+                if [ -n "$STANDALONE_CONTAINERS" ]; then
+                    DOCKER_STANDALONE_TO_RESTART="$STANDALONE_CONTAINERS"
+                    echo -e "${CYAN}Stopping standalone containers:${NC}"
+                    $SUDO docker stop $STANDALONE_CONTAINERS >/dev/null 2>&1 || true
+                fi
+                
+                # Verify stop
+                REMAINING_RUNNING=$($SUDO docker ps -q)
+                if [ -z "$REMAINING_RUNNING" ]; then
+                    echo -e "${GREEN}Confirmed: All targeted containers are stopped.${NC}"
+                else
+                    echo -e "${YELLOW}Warning: Some containers might still be running after stop attempt: ${REMAINING_RUNNING}${NC}"
+                fi
+            else
+                echo -e "${YELLOW}Skipping Docker container shutdown. Proceeding with update...${NC}"
             fi
         else
-            echo -e "${GREEN}No Docker containers to stop.${NC}"
+            echo -e "${GREEN}No running Docker containers to stop.${NC}"
         fi
     fi
 fi
@@ -427,12 +421,6 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
         echo -e "${GREEN}System upgrade complete.${NC}"
 
         # --- Docker Post-Update Restart ---
-        if [ -n "$DOCKER_STANDALONE_TO_RESTART" ]; then
-            echo -e "${BLUE}Restarting previously running standalone Docker containers...${NC}"
-            $SUDO docker start $DOCKER_STANDALONE_TO_RESTART >/dev/null 2>&1
-            echo -e "${GREEN}Standalone containers restarted.${NC}"
-        fi
-
         if [ -n "$DOCKER_COMPOSE_TO_RESTART" ]; then
             echo -e "${BLUE}Restarting Compose environments...${NC}"
             while IFS= read -r CONF_FILES; do
@@ -445,6 +433,12 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
                 $SUDO docker compose "${COMPOSE_ARGS[@]}" up -d || true
             done <<< "$DOCKER_COMPOSE_TO_RESTART"
             echo -e "${GREEN}Compose environments restarted.${NC}"
+        fi
+
+        if [ -n "$DOCKER_STANDALONE_TO_RESTART" ]; then
+            echo -e "${BLUE}Restarting previously running standalone Docker containers...${NC}"
+            $SUDO docker start $DOCKER_STANDALONE_TO_RESTART >/dev/null 2>&1
+            echo -e "${GREEN}Standalone containers restarted.${NC}"
         fi
     fi
 
@@ -508,16 +502,17 @@ if [ "$PACKAGE_MANAGER" = "apt" ]; then
     CURRENT_KERNEL=$(uname -r)
     
     # Find all installed kernel packages, excluding the current one
-    OLD_KERNELS=$(dpkg --list | grep -E 'linux-(image|headers)-[0-9]+' | awk '{ print $2 }' | grep -vF "$CURRENT_KERNEL")
+    OLD_KERNELS_STR=$(dpkg --list | grep -E 'linux-(image|headers)-[0-9]+' | awk '{ print $2 }' | grep -vF "$CURRENT_KERNEL")
+    OLD_KERNELS=($OLD_KERNELS_STR)
 
-    if [ -n "$OLD_KERNELS" ]; then
+    if [ ${#OLD_KERNELS[@]} -gt 0 ]; then
         echo -e "${YELLOW}Found old kernel packages that can be removed:${NC}"
-        echo -e "${CYAN}$OLD_KERNELS${NC}"
+        printf "${CYAN}%s${NC}\n" "${OLD_KERNELS[@]}"
         echo -e "${YELLOW}Do you want to remove these old kernels? (y/n)${NC}"
-        read -r response
+        read -r response < /dev/tty
         if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
             echo -e "${BLUE}Removing old kernels...${NC}"
-            $SUDO apt-get purge -y $OLD_KERNELS
+            $SUDO apt-get purge -y "${OLD_KERNELS[@]}"
             echo -e "${GREEN}Old kernels removed.${NC}"
         else
             echo -e "${YELLOW}Skipping old kernel removal.${NC}"

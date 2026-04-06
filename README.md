@@ -30,8 +30,8 @@ This script is a robust update tool for Linux distributions. It intelligently de
 *   **Log Cleanup:** Clears old system logs to free up space.
 *   **Open Ports:** Lists currently open TCP and UDP ports on the system, using `lsof`, `ss`, or `netstat` as fallbacks.
 *   **Docker Integration:** Stops Docker containers before system updates if Docker-related packages are being updated, and restarts them afterward.
-*   **Progress Bars & Dependency Handling:** Attempts to install `pv` (Pipe Viewer) for progress bars and `lsof` for listing open ports, with improved error handling for installation failures.
-*   **Advanced Docker & Compose Integration:** Lists running containers at startup. If Docker-related updates are required, it natively handles stopping and restarting them based on their deployment strategy: Standalone containers are managed via standard commands, while composed projects are smartly stopped and restarted using `docker compose up -d` against their native `.yml` configuration contexts.
+*   **Dependency Handling:** Safely attempts to install `lsof` for listing open ports, with improved error handling for installation failures.
+*   **Advanced Docker & Compose Integration:** Categorizes running containers into Standalone and Compose projects at startup. If Docker-related updates are required, it natively prompts you to confirm stopping and restarting them based on their deployment strategy: Compose projects are smartly stopped and restarted using `docker compose up -d` against their native `.yml` configuration contexts, while standalone containers are managed first to shut down but afterwards to start.
 
 **Usage:**
 

@@ -20,11 +20,11 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.2"
+SCRIPT_VERSION="1.3"
 
 # --- Self-Update Check ---
 GITHUB_RAW_URL="https://raw.githubusercontent.com/CleanKM/nixupdater/main/macos/update_macos.sh"
-SCRIPT_PATH="$(readlink -f "$0")" # Get absolute path of the current script
+SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")" # Get absolute path of the current script
 TEMP_SCRIPT_PATH=$(mktemp)
 
 # Check if curl is available
@@ -317,12 +317,6 @@ fi
 
 echo ""
 echo -e "${MAGENTA}--- Clearing Old Logs ---${NC}"
-if command -v log &> /dev/null; then
-    echo -e "${BLUE}Using 'log' to clear logs older than 10 days...${NC}"
-    # This is not a direct equivalent, as 'log' is for querying.
-    # A more direct approach is to use find.
-    echo -e "${YELLOW}Warning: 'log' command does not support clearing logs by time. Using 'find'.${NC}"
-fi
 echo -e "${BLUE}Clearing .log and .gz files older than 10 days from /var/log and ~/Library/Logs...${NC}"
 $SUDO find /var/log -type f \( -name "*.log" -o -name "*.gz" \) -mtime +10 -delete
 find ~/Library/Logs -type f \( -name "*.log" -o -name "*.gz" \) -mtime +10 -delete
