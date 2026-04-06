@@ -11,7 +11,7 @@ This project provides scripts to streamline system updates for both Linux and ma
 
 ### Linux (`linux/update.sh`)
 
-A comprehensive update tool for various Linux distributions. It automates updates for system packages, Flatpak, and Snap applications. Key features include an enhanced sudo check, Docker and Docker Compose integration for seamless updates, a self-update mechanism, and system cleanup.
+A comprehensive update tool for various Linux distributions. It automates updates for system packages, Flatpak, and Snap applications. Key features include an enhanced sudo check, robust Docker and Docker Compose integration with targeted container management, a self-update mechanism built for interactive and headless flows, and safe system cleanup.
 
 ### macOS (`macos/update_macos.sh`)
 

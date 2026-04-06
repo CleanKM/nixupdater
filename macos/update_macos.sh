@@ -20,12 +20,13 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.3.1"
+SCRIPT_VERSION="1.3.6"
 
 # --- Self-Update Check ---
 GITHUB_RAW_URL="https://raw.githubusercontent.com/CleanKM/nixupdater/main/macos/update_macos.sh"
 SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")" # Get absolute path of the current script
 TEMP_SCRIPT_PATH=$(mktemp)
+trap 'rm -f "$TEMP_SCRIPT_PATH"' EXIT
 
 # Check if curl is available
 if ! command -v curl &> /dev/null; then
@@ -45,9 +46,17 @@ else
             rm -f "$TEMP_SCRIPT_PATH"
         elif [ "$LOCAL_CHECKSUM" != "$REMOTE_CHECKSUM" ]; then
             echo -e "${YELLOW}A new version of the script is available!${NC}"
-            echo -e "${YELLOW}Do you want to update to the latest version? (y/n)${NC}"
-            read -r response < /dev/tty
-            if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+            RESPONSE_IS_YES=false
+            if [ -t 1 ]; then
+                echo -e "${YELLOW}Do you want to update to the latest version? (y/n)${NC}"
+                read -r response < /dev/tty
+                if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+                    RESPONSE_IS_YES=true
+                fi
+            else
+                echo -e "${YELLOW}Non-interactive mode detected. Skipping script update.${NC}"
+            fi
+            if [ "$RESPONSE_IS_YES" = true ]; then
                 echo -e "${BLUE}Updating script...${NC}"
                 if mv "$TEMP_SCRIPT_PATH" "$SCRIPT_PATH"; then
                     chmod +x "$SCRIPT_PATH"
@@ -140,7 +149,7 @@ else
     echo -e "${YELLOW}Mac App Store CLI 'mas' not found.${NC}"
     if [[ " ${PACKAGE_MANAGERS[*]} " =~ " brew " ]]; then
         echo -e "${YELLOW}Do you want to install 'mas' using Homebrew to manage App Store apps? (y/n)${NC}"
-        read -r response
+        read -r response < /dev/tty
         if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
             echo -e "${BLUE}Installing 'mas'...${NC}"
             brew install mas
@@ -165,7 +174,7 @@ echo -n -e "${BLUE}Checking for macOS updates...${NC}"
 spinner $!
 echo -e "${GREEN}Done!${NC}"
 
-SYSTEM_UPDATES=$($SUDO softwareupdate -l 2>&1 | grep "Software Update found the following new or updated software:" -A 100 | grep -v "Software Update found")
+SYSTEM_UPDATES=$($SUDO softwareupdate -l 2>&1 | awk '/Software Update found the following new or updated software:/{found=1; next} found')
 
 BREW_UPDATES=""
 BREW_CASK_UPDATES=""
@@ -305,7 +314,6 @@ fi
 if [[ " ${PACKAGE_MANAGERS[*]} " =~ " brew " ]]; then
     echo -e "${BLUE}Clearing Homebrew cache...${NC}"
     brew cleanup -s
-    rm -rf "$(brew --cache)"
     echo -e "${GREEN}Done!${NC}"
 fi
 

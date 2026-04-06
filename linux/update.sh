@@ -20,12 +20,13 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.7.2"
+SCRIPT_VERSION="1.7.7"
 
 # --- Self-Update Check ---
 GITHUB_RAW_URL="https://raw.githubusercontent.com/CleanKM/nixupdater/main/linux/update.sh"
 SCRIPT_PATH="$(readlink -f "$0")" # Get absolute path of the current script
 TEMP_SCRIPT_PATH=$(mktemp)
+trap 'rm -f "$TEMP_SCRIPT_PATH"' EXIT
 
 # Check if curl is available
 if ! command -v curl &> /dev/null; then
@@ -52,7 +53,7 @@ else
                 if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
                     RESPONSE_IS_YES=true
                 else
-                    echo -e "${YELLOW}Non-interactive mode detected. Skipping script update.${NC}"
+                    echo -e "${YELLOW}Skipping script update.${NC}"
                 fi
             else
                 echo -e "${YELLOW}Non-interactive mode detected. Skipping script update.${NC}"
@@ -85,7 +86,7 @@ if [ "$EUID" -ne 0 ]; then
     # Not running as root
     echo -e "${BLUE}This script requires sudo privileges to run.${NC}"
 
-    if groups "$USER" | grep -q '\bsudo\b'; then
+    if groups "$USER" | grep -qE '\b(sudo|wheel)\b'; then
         # User is in the sudo group, offer to relaunch
         echo -e "${YELLOW}You are in the 'sudo' group. Do you want to relaunch this script with sudo? (y/n)${NC}"
         RESPONSE_IS_YES=false
@@ -94,7 +95,7 @@ if [ "$EUID" -ne 0 ]; then
             if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
                 RESPONSE_IS_YES=true
             else
-                echo -e "${YELLOW}Non-interactive mode detected. Sudo relaunch declined.${NC}"
+                echo -e "${YELLOW}Sudo relaunch declined.${NC}"
             fi
         else
             echo -e "${YELLOW}Non-interactive mode detected. Sudo relaunch declined.${NC}"
@@ -102,7 +103,7 @@ if [ "$EUID" -ne 0 ]; then
 
         if [ "$RESPONSE_IS_YES" = true ]; then
             echo -e "${BLUE}Relaunching with sudo...${NC}"
-            exec sudo "$0" "$@" # Relaunch the script with sudo
+            exec sudo "$SCRIPT_PATH" "$@" # Relaunch the script with sudo
         else
             echo -e "${RED}Sudo privileges declined. Exiting.${NC}"
             exit 1
@@ -313,7 +314,7 @@ fi
 DOCKER_STANDALONE_TO_RESTART=""
 DOCKER_COMPOSE_TO_RESTART=""
 if command -v docker &> /dev/null; then
-    if echo "$SYSTEM_UPDATES" | grep -q -e "docker" -e "containerd"; then
+    if echo "$SYSTEM_UPDATES" | grep -qiE '\b(docker|containerd)\b'; then
         echo -e "${YELLOW}Docker-related update found.${NC}"
         
         # 1. Identify Compose Project Configs (Running only)
@@ -406,12 +407,25 @@ if command -v docker &> /dev/null; then
                     $SUDO docker stop $STANDALONE_CONTAINERS >/dev/null 2>&1 || true
                 fi
                 
-                # Verify stop
-                REMAINING_RUNNING=$($SUDO docker ps -q)
-                if [ -z "$REMAINING_RUNNING" ]; then
+                # Verify stop - only check targeted containers
+                REMAINING_TARGETED=""
+                for ID in $STANDALONE_CONTAINERS; do
+                    [ -z "$ID" ] && continue
+                    STILL_UP=$($SUDO docker ps -q --filter "id=$ID" 2>/dev/null)
+                    [ -n "$STILL_UP" ] && REMAINING_TARGETED="$REMAINING_TARGETED $ID"
+                done
+                if [ -n "$COMPOSE_CONFIGS" ]; then
+                    while IFS= read -r CONF_FILES_CHK; do
+                        [ -z "$CONF_FILES_CHK" ] && continue
+                        STILL_UP=$($SUDO docker ps -q --filter "label=com.docker.compose.project.config_files=$CONF_FILES_CHK" 2>/dev/null)
+                        [ -n "$STILL_UP" ] && REMAINING_TARGETED="$REMAINING_TARGETED compose:$(basename "$(dirname "$CONF_FILES_CHK")")"
+                    done <<< "$COMPOSE_CONFIGS"
+                fi
+                REMAINING_TARGETED=$(echo "$REMAINING_TARGETED" | xargs)
+                if [ -z "$REMAINING_TARGETED" ]; then
                     echo -e "${GREEN}Confirmed: All targeted containers are stopped.${NC}"
                 else
-                    echo -e "${YELLOW}Warning: Some containers might still be running after stop attempt: ${REMAINING_RUNNING}${NC}"
+                    echo -e "${YELLOW}Warning: Some targeted containers may still be running: ${REMAINING_TARGETED}${NC}"
                 fi
             else
                 echo -e "${YELLOW}Skipping Docker container shutdown. Proceeding with update...${NC}"
@@ -592,12 +606,15 @@ case "$PACKAGE_MANAGER" in
         fi
         if command -v needs-restarting &> /dev/null; then
             # Exit code 1 means reboot is required.
-            if $SUDO needs-restarting -r >/dev/null 2>&1; then
+            if $SUDO needs-restarting -r > /dev/null 2>&1; then
                 : # Exit code 0, no reboot needed
             else
                 REBOOT_NEEDED=true
             fi
         fi
+        ;;
+    "pacman" | "apk")
+        echo -e "${YELLOW}Reboot check not automated for this package manager. Please reboot manually if a kernel was updated.${NC}"
         ;;
 esac
 
@@ -618,8 +635,7 @@ if [ "$PACKAGE_MANAGER" = "apt" ]; then
     CURRENT_KERNEL=$(uname -r)
     
     # Find all installed kernel packages, excluding the current one
-    OLD_KERNELS_STR=$(dpkg --list | grep -E 'linux-(image|headers)-[0-9]+' | awk '{ print $2 }' | grep -vF "$CURRENT_KERNEL")
-    OLD_KERNELS=($OLD_KERNELS_STR)
+    mapfile -t OLD_KERNELS < <(dpkg --list | grep -E 'linux-(image|headers)-[0-9]+' | awk '{ print $2 }' | grep -vF "$CURRENT_KERNEL")
 
     if [ ${#OLD_KERNELS[@]} -gt 0 ]; then
         echo -e "${YELLOW}Found old kernel packages that can be removed:${NC}"
@@ -650,7 +666,7 @@ case "$PACKAGE_MANAGER" in
     "pacman")
         # First, find orphaned packages, then remove them if any exist.
         if [[ -n $($SUDO pacman -Qdtq) ]]; then
-            $SUDO pacman -Rns "$($SUDO pacman -Qdtq)" --noconfirm
+            $SUDO pacman -Qdtq | xargs $SUDO pacman -Rns --noconfirm
         else
             echo "No orphaned packages to remove."
         fi
@@ -674,7 +690,7 @@ case "$PACKAGE_MANAGER" in
         $SUDO dnf clean all
         ;;
     "pacman")
-        $SUDO pacman -Scc --noconfirm # -Scc removes all cached packages. Use -Sc to keep the latest versions.
+        $SUDO pacman -Sc --noconfirm # -Sc removes unneeded cached packages while keeping the latest version.
         ;;
     "apk")
         $SUDO apk cache clean
