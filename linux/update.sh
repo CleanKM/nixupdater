@@ -20,7 +20,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.7.1"
+SCRIPT_VERSION="1.7.2"
 
 # --- Self-Update Check ---
 GITHUB_RAW_URL="https://raw.githubusercontent.com/CleanKM/nixupdater/main/linux/update.sh"
@@ -31,9 +31,10 @@ TEMP_SCRIPT_PATH=$(mktemp)
 if ! command -v curl &> /dev/null; then
     echo -e "${YELLOW}Warning: 'curl' not found. Cannot check for script updates.${NC}"
 else
-    # Download remote script
-    if ! curl -s "$GITHUB_RAW_URL" -o "$TEMP_SCRIPT_PATH"; then
-        echo -e "${RED}Error: Failed to download remote script for update check. Skipping self-update.${NC}"
+    # Download remote script with cache-busting and network timeouts
+    CACHE_BUSTER=$(date +%s)
+    if ! curl -sSfL --connect-timeout 5 --max-time 10 -H "Cache-Control: no-cache" "$GITHUB_RAW_URL?t=$CACHE_BUSTER" -o "$TEMP_SCRIPT_PATH"; then
+        echo -e "${RED}Error: Failed to download remote script or network is down. Skipping self-update.${NC}"
         rm -f "$TEMP_SCRIPT_PATH"
     else
         LOCAL_CHECKSUM=$(get_sha256 "$SCRIPT_PATH")

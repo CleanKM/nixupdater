@@ -69,7 +69,7 @@ This script is designed to keep your macOS system and its installed software up-
 *   **Log Cleanup:** Clears old log files from common macOS log directories.
 *   **Open Ports:** Lists currently open TCP and UDP ports on the system, using `lsof` or `netstat` as fallbacks.
 *   **Reboot Check:** Notifies you if a restart is required after installing macOS system updates.
-*   **Automatic Self-Update:** The script can check for and offer to install its own latest version from the GitHub repository.
+*   **Automatic Self-Update:** The script can check for and offer to install its own latest version from the GitHub repository. Built with instant CDN cache-busting logic and graceful offline network fallbacks.
 *   **Version Display:** Shows the script's current version at startup.
 *   **Simple Banner:** Displays a clean, informative banner instead of ASCII art.
 

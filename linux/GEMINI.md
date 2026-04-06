@@ -11,7 +11,7 @@ This project contains the `update.sh` script, a comprehensive tool for updating 
 *   **Upgrade Checks:** Notifies about distribution-level upgrades and firmware updates.
 *   **System Information:** Displays open ports using `lsof`, `ss`, or `netstat`.
 *   **Docker Integration:** Lists running Docker containers and manages their lifecycle during updates.
-*   **Self-Update:** Automatically checks for and installs the latest version from the GitHub repository.
+*   **Self-Update:** Automatically checks for and installs the latest version from the GitHub repository, featuring instant CDN cache-busting and graceful offline connection handling.
 *   **Version Display:** Shows the current script version.
 *   **Banner:** Displays a clean, informative startup banner.
 ## Robustness Improvements (v1.4+)

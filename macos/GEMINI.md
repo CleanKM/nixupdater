@@ -9,7 +9,7 @@ This project contains the `update_macos.sh` script, a tool for automating update
 *   **Comprehensive Updates:** Handles system updates, Homebrew (formulae and casks), and MacPorts packages.
 *   **System Maintenance:** Cleans up unused packages and clears caches for Homebrew and MacPorts.
 *   **System Information:** Displays open ports using `lsof` or `netstat`.
-*   **Self-Update:** Automatically checks for and installs the latest version from the GitHub repository.
+*   **Self-Update:** Automatically checks for and installs the latest version from the GitHub repository, featuring instant CDN cache-busting and graceful offline connection handling.
 *   **Version Display:** Shows the current script version.
 *   **Banner:** Displays a clean, informative startup banner.
 
