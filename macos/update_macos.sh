@@ -23,8 +23,20 @@ NC='\033[0m' # No Color
 SCRIPT_VERSION="1.3.6"
 
 # --- Self-Update Check ---
-GITHUB_RAW_URL="https://raw.githubusercontent.com/CleanKM/nixupdater/main/macos/update_macos.sh"
+SKIP_SELF_UPDATE=false
+for arg in "$@"; do
+    if [ "$arg" == "noupdate" ]; then
+        SKIP_SELF_UPDATE=true
+        break
+    fi
+done
+
 SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")" # Get absolute path of the current script
+
+if [ "$SKIP_SELF_UPDATE" = true ]; then
+    echo -e "${YELLOW}Skipping self-update check due to 'noupdate' argument.${NC}"
+else
+    GITHUB_RAW_URL="https://raw.githubusercontent.com/CleanKM/nixupdater/main/macos/update_macos.sh"
 TEMP_SCRIPT_PATH=$(mktemp)
 trap 'rm -f "$TEMP_SCRIPT_PATH"' EXIT
 
@@ -75,6 +87,7 @@ else
             rm -f "$TEMP_SCRIPT_PATH"
         fi
     fi
+fi
 fi
 
 # --- Sudo check and prompt ---

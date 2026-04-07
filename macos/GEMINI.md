@@ -23,6 +23,12 @@ Execute it from your terminal:
 ```bash
 ./update_macos.sh
 ```
+
+To run the script and skip the self-update check, use the `noupdate` argument:
+```bash
+./update_macos.sh noupdate
+```
+
 Or, if not executable:
 ```bash
 bash update_macos.sh

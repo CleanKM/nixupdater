@@ -20,11 +20,23 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.7.7"
+SCRIPT_VERSION="1.7.9"
 
 # --- Self-Update Check ---
-GITHUB_RAW_URL="https://raw.githubusercontent.com/CleanKM/nixupdater/main/linux/update.sh"
+SKIP_SELF_UPDATE=false
+for arg in "$@"; do
+    if [ "$arg" == "noupdate" ]; then
+        SKIP_SELF_UPDATE=true
+        break
+    fi
+done
+
 SCRIPT_PATH="$(readlink -f "$0")" # Get absolute path of the current script
+
+if [ "$SKIP_SELF_UPDATE" = true ]; then
+    echo -e "${YELLOW}Skipping self-update check due to 'noupdate' argument.${NC}"
+else
+    GITHUB_RAW_URL="https://raw.githubusercontent.com/CleanKM/nixupdater/main/linux/update.sh"
 TEMP_SCRIPT_PATH=$(mktemp)
 trap 'rm -f "$TEMP_SCRIPT_PATH"' EXIT
 
@@ -78,6 +90,7 @@ else
             rm -f "$TEMP_SCRIPT_PATH"
         fi
     fi
+fi
 fi
 
 # --- Sudo check and prompt ---
@@ -184,39 +197,47 @@ else
 fi
 
 # --- Package Manager Detection ---
-case "$DISTRO" in
-    "ubuntu" | "debian" | "pop" | "linuxmint" | "zorin" | "elementary" | "raspbian" | "mx" | "kali")
-        PACKAGE_MANAGER="apt"
-        ;;
-    "fedora" | "centos" | "rhel" | "nobara" | "rocky" | "almalinux")
-        PACKAGE_MANAGER="dnf"
-        ;;
-    "arch" | "manjaro" | "endeavouros" | "garuda")
-        PACKAGE_MANAGER="pacman"
-        ;;
-    "alpine")
-        PACKAGE_MANAGER="apk"
-        ;;
-    *)
-        echo -e "${YELLOW}Unsupported distribution: '$OS'. Attempting to find a compatible package manager...${NC}"
-        if command -v apt &> /dev/null; then
+if [ -f /run/ostree-booted ] && command -v rpm-ostree &> /dev/null; then
+    PACKAGE_MANAGER="rpm-ostree"
+elif command -v transactional-update &> /dev/null; then
+    PACKAGE_MANAGER="transactional-update"
+elif command -v nixos-rebuild &> /dev/null; then
+    PACKAGE_MANAGER="nixos"
+else
+    case "$DISTRO" in
+        "ubuntu" | "debian" | "pop" | "linuxmint" | "zorin" | "elementary" | "raspbian" | "mx" | "kali")
             PACKAGE_MANAGER="apt"
-            echo -e "${GREEN}Found 'apt'. Proceeding.${NC}"
-        elif command -v dnf &> /dev/null; then
+            ;;
+        "fedora" | "centos" | "rhel" | "nobara" | "rocky" | "almalinux")
             PACKAGE_MANAGER="dnf"
-            echo -e "${GREEN}Found 'dnf'. Proceeding.${NC}"
-        elif command -v pacman &> /dev/null; then
+            ;;
+        "arch" | "manjaro" | "endeavouros" | "garuda")
             PACKAGE_MANAGER="pacman"
-            echo -e "${GREEN}Found 'pacman'. Proceeding.${NC}"
-        elif command -v apk &> /dev/null; then
+            ;;
+        "alpine")
             PACKAGE_MANAGER="apk"
-            echo -e "${GREEN}Found 'apk'. Proceeding.${NC}"
-        else
-            echo -e "${RED}Could not find a supported package manager (apt, dnf, pacman, apk). Exiting.${NC}"
-            exit 1
-        fi
-        ;;
-esac
+            ;;
+        *)
+            echo -e "${YELLOW}Unsupported distribution: '$OS'. Attempting to find a compatible package manager...${NC}"
+            if command -v apt &> /dev/null; then
+                PACKAGE_MANAGER="apt"
+                echo -e "${GREEN}Found 'apt'. Proceeding.${NC}"
+            elif command -v dnf &> /dev/null; then
+                PACKAGE_MANAGER="dnf"
+                echo -e "${GREEN}Found 'dnf'. Proceeding.${NC}"
+            elif command -v pacman &> /dev/null; then
+                PACKAGE_MANAGER="pacman"
+                echo -e "${GREEN}Found 'pacman'. Proceeding.${NC}"
+            elif command -v apk &> /dev/null; then
+                PACKAGE_MANAGER="apk"
+                echo -e "${GREEN}Found 'apk'. Proceeding.${NC}"
+            else
+                echo -e "${RED}Could not find a supported package manager (apt, dnf, pacman, apk). Exiting.${NC}"
+                exit 1
+            fi
+            ;;
+    esac
+fi
 echo -e "${BLUE}Using package manager: ${GREEN}$PACKAGE_MANAGER${NC}"
 echo ""
 
@@ -254,6 +275,12 @@ case "$PACKAGE_MANAGER" in
     "apk")
         $SUDO apk update >/dev/null 2>&1
         ;;
+    "rpm-ostree")
+        rpm-ostree upgrade --check >/dev/null 2>&1
+        ;;
+    "transactional-update" | "nixos")
+        # Checking is either bundled with upgrade or omitted to save time
+        ;;
 esac
 ) & 
 spinner $!
@@ -272,6 +299,15 @@ case "$PACKAGE_MANAGER" in
         ;;
     "apk")
         apk list --upgradeable 2>/dev/null | tail -n +1 # apk list --upgradeable includes a header
+        ;;
+    "rpm-ostree")
+        rpm-ostree status -v | grep -q -E "AvailableUpdate: yes|Staged: yes" && echo "OSTree updates are available (pending deployment)."
+        ;;
+    "transactional-update")
+        echo "Transactional updates will be checked during the upgrade phase."
+        ;;
+    "nixos")
+        echo "NixOS channel/flake updates will be evaluated during the upgrade phase."
         ;;
 esac
 )
@@ -470,6 +506,19 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
             "apk")
                     $SUDO apk upgrade
                 ;;
+            "rpm-ostree")
+                    if command -v bootc &> /dev/null && ! grep -q -E -e "LockLayering=false" /etc/rpm-ostreed.conf 2>/dev/null; then
+                        $SUDO bootc upgrade
+                    else
+                        $SUDO rpm-ostree upgrade
+                    fi
+                ;;
+            "transactional-update")
+                    $SUDO transactional-update dup
+                ;;
+            "nixos")
+                    $SUDO nix-channel --update && $SUDO nixos-rebuild switch --upgrade
+                ;;
         esac
         echo -e "${GREEN}System upgrade complete.${NC}"
 
@@ -613,7 +662,18 @@ case "$PACKAGE_MANAGER" in
             fi
         fi
         ;;
-    "pacman" | "apk")
+    "rpm-ostree")
+        if rpm-ostree status | grep -q -E "(pending)|Staged: yes"; then
+            REBOOT_NEEDED=true
+        fi
+        ;;
+    "transactional-update")
+        # If an update happened, it always stages for the next reboot in MicroOS
+        if [ -n "$SYSTEM_UPDATES" ]; then
+            REBOOT_NEEDED=true
+        fi
+        ;;
+    "pacman" | "apk" | "nixos")
         echo -e "${YELLOW}Reboot check not automated for this package manager. Please reboot manually if a kernel was updated.${NC}"
         ;;
 esac
@@ -677,6 +737,15 @@ case "$PACKAGE_MANAGER" in
         echo "apk does not have a direct 'autoremove' equivalent."
         echo "Consider manually removing unneeded packages if necessary."
         ;;
+    "rpm-ostree")
+        echo "rpm-ostree images are managed atomically. No autoremove required."
+        ;;
+    "transactional-update")
+        echo "Transactional snapshots will be cleaned up during the next phase."
+        ;;
+    "nixos")
+        $SUDO nix-collect-garbage -d
+        ;;
 esac
 echo -e "${GREEN}Done!${NC}"
 
@@ -694,6 +763,15 @@ case "$PACKAGE_MANAGER" in
         ;;
     "apk")
         $SUDO apk cache clean
+        ;;
+    "rpm-ostree")
+        $SUDO rpm-ostree cleanup -m
+        ;;
+    "transactional-update")
+        $SUDO transactional-update cleanup
+        ;;
+    "nixos")
+        echo "NixOS store optimize not strictly required, skipped."
         ;;
 esac
 echo -e "${GREEN}Done!${NC}"

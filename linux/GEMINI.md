@@ -4,7 +4,7 @@ This project contains the `update.sh` script, a comprehensive tool for updating 
 
 ## Key Features
 
-*   **Cross-Distribution Support:** Automatically detects the distribution and uses the appropriate package manager (`apt`, `dnf`, `pacman`, `apk`).
+*   **Cross-Distribution Support:** Automatically detects the distribution and uses the appropriate package manager (`apt`, `dnf`, `pacman`, `apk`, `rpm-ostree`, `bootc`). Full support for immutable and OCI-based OSes (e.g. Fedora Silverblue, Bluefin).
 *   **Sudo Privilege Check:** Intelligently handles `sudo` privileges, relaunching itself if necessary.
 *   **Comprehensive Updates:** Manages system packages, Flatpak, and Snap updates in a single run.
 *   **System Maintenance:** Cleans unused packages and clears package caches.
@@ -32,6 +32,12 @@ Execute it from your terminal:
 ```bash
 ./update.sh
 ```
+
+To run the script and skip the self-update check, use the `noupdate` argument:
+```bash
+./update.sh noupdate
+```
+
 Or, if not executable:
 ```bash
 bash update.sh

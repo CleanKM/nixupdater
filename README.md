@@ -17,7 +17,7 @@ This script is a robust update tool for Linux distributions. It intelligently de
 
 **Key Features:**
 
-*   **Cross-Distribution Support:** Automatically identifies the Linux distribution (e.g., Ubuntu, Fedora, Arch, Alpine) and utilizes `apt`, `dnf`, `pacman`, or `apk` accordingly.
+*   **Cross-Distribution Support:** Automatically identifies the Linux distribution (e.g., Ubuntu, Fedora, Arch, Alpine, Immutable/OCI-based OSes like Bluefin) and utilizes `apt`, `dnf`, `pacman`, `apk`, `rpm-ostree`, or `bootc` accordingly.
 *   **Enhanced Sudo Privilege Check:** Intelligently checks for sudo/root privileges, offering to relaunch the script with sudo if the user is in the sudo group.
 *   **Version Display:** Shows the script's current version at startup.
 *   **Simple Banner:** Displays a clean, informative banner instead of ASCII art.
@@ -87,6 +87,12 @@ To run the macOS update script:
 
 ```bash
 ./update_macos.sh
+```
+
+To run the script and skip the self-update check, use the `noupdate` argument:
+
+```bash
+./update_macos.sh noupdate
 ```
 
 Or, if it's not executable:
