@@ -20,7 +20,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.7.9"
+SCRIPT_VERSION="1.8.0"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
@@ -336,10 +336,19 @@ if command -v snap &> /dev/null; then
 else
     echo -e "${YELLOW}Snap not found. Skipping Snap check.${NC}"
 fi
+
+BREW_UPDATES=""
+if command -v brew &> /dev/null; then
+    echo -n -e "${BLUE}Checking for Homebrew updates...${NC}"
+    BREW_UPDATES=$(brew outdated 2>/dev/null)
+    echo -e "${GREEN}Done!${NC}"
+else
+    echo -e "${YELLOW}Homebrew not found. Skipping Homebrew check.${NC}"
+fi
 echo ""
 
 # --- List Updates and Upgrade ---
-if [ -z "$SYSTEM_UPDATES" ] && [ -z "$FLATPAK_UPDATES" ] && [ -z "$SNAP_UPDATES" ]; then
+if [ -z "$SYSTEM_UPDATES" ] && [ -z "$FLATPAK_UPDATES" ] && [ -z "$SNAP_UPDATES" ] && [ -z "$BREW_UPDATES" ]; then
     echo -e "${GREEN}=========================${NC}"
     echo -e "${GREEN} Your system is up to date. ${NC}"
     echo -e "${GREEN}=========================${NC}"
@@ -473,7 +482,7 @@ if command -v docker &> /dev/null; then
 fi
 
 # --- Upgrade ---
-if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES" ]; then
+if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES" ] || [ -n "$BREW_UPDATES" ]; then
     echo -e "${YELLOW}--- Pending Updates ---""${NC}"
     if [ -n "$SYSTEM_UPDATES" ]; then
         echo -e "${CYAN}--- System Updates ---""${NC}"
@@ -486,6 +495,10 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
     if [ -n "$SNAP_UPDATES" ]; then
         echo -e "${CYAN}--- Snap Updates ---""${NC}"
         echo "$SNAP_UPDATES"
+    fi
+    if [ -n "$BREW_UPDATES" ]; then
+        echo -e "${CYAN}--- Homebrew Updates ---""${NC}"
+        echo "$BREW_UPDATES"
     fi
     echo ""
     echo -e "${MAGENTA}Starting automatic upgrade...${NC}"
@@ -634,6 +647,14 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
         echo -e "${BLUE}Upgrading Snap packages...${NC}"
         $SUDO snap refresh
         echo -e "${GREEN}Snap upgrade complete.${NC}"
+    fi
+
+    # Homebrew Upgrade
+    if [ -n "$BREW_UPDATES" ]; then
+        echo -e "${BLUE}Upgrading Homebrew packages...${NC}"
+        brew upgrade
+        brew cleanup
+        echo -e "${GREEN}Homebrew upgrade complete.${NC}"
     fi
 fi
 

@@ -22,7 +22,7 @@ This script is a robust update tool for Linux distributions. It intelligently de
 *   **Version Display:** Shows the script's current version at startup.
 *   **Simple Banner:** Displays a clean, informative banner instead of ASCII art.
 *   **Robust Non-Interactive Execution:** Hardened prompts and execution flows for safe use in piped or automated, headless environments.
-*   **Comprehensive Updates:** Manages updates for system packages, Flatpak applications, and Snap packages.
+*   **Comprehensive Updates:** Manages updates for system packages, Flatpak applications, Snap packages, and Homebrew (Linuxbrew) formulae and casks.
 *   **System Maintenance:** Includes routines for removing unnecessary packages (`autoremove`) safely and clearing package caches conservatively. For Alpine Linux, it notes that a direct 'autoremove' equivalent is not available.
 *   **Debian/Ubuntu Health Checks:** For Debian-based systems, it checks for held packages.
 *   **Old Kernel Cleanup:** On Debian-based systems, it identifies and offers to remove old, unused kernels to free up disk space.
