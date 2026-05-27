@@ -79,7 +79,7 @@ This script is designed to keep your macOS system and its installed software up-
 *   **Open Ports:** Lists currently open TCP and UDP ports on the system using `lsof` or `netstat`, utilizing advanced filtering to list both listening TCP sockets and open UDP ports accurately.
 *   **Reboot Check:** Notifies you if a restart is required after installing macOS system updates.
 *   **Robust Non-Interactive Execution:** Safe integration with headless and pipelined scenarios across all prompts (including self-update confirmations and system update confirmations).
-*   **Automatic Self-Update:** The script can check for and offer to install its own latest version from the GitHub repository. Built with instant CDN cache-busting logic and graceful offline network fallbacks.
+*   **Automatic Self-Update:** The script can check for and offer to install its own latest version from the GitHub repository. Built with instant CDN cache-busting logic, graceful offline network fallbacks, and single-pass relaunch optimization to prevent redundant network checks during process handoffs and sudo elevations.
 *   **Version Display:** Shows the script's current version at startup.
 *   **Simple Banner:** Displays a clean, informative banner instead of ASCII art.
 
