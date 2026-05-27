@@ -32,10 +32,13 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.8.3"
+SCRIPT_VERSION="1.8.4"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
+if [ "$NIXUPDATER_SKIP_CHECK" = "true" ]; then
+    SKIP_SELF_UPDATE=true
+fi
 for arg in "$@"; do
     if [ "$arg" == "noupdate" ]; then
         SKIP_SELF_UPDATE=true
@@ -46,7 +49,9 @@ done
 SCRIPT_PATH="$(readlink -f "$0")" # Get absolute path of the current script
 
 if [ "$SKIP_SELF_UPDATE" = true ]; then
-    echo -e "${YELLOW}Skipping self-update check due to 'noupdate' argument.${NC}"
+    if [ "$NIXUPDATER_SKIP_CHECK" != "true" ]; then
+        echo -e "${YELLOW}Skipping self-update check due to 'noupdate' argument.${NC}"
+    fi
 else
     GITHUB_RAW_URL="https://raw.githubusercontent.com/CleanKM/nixupdater/main/linux/update.sh"
 TEMP_SCRIPT_PATH=$(mktemp)
@@ -88,6 +93,7 @@ else
                 if mv "$TEMP_SCRIPT_PATH" "$SCRIPT_PATH"; then
                     chmod +x "$SCRIPT_PATH"
                     echo -e "${GREEN}Script updated successfully. Relaunching...${NC}"
+                    export NIXUPDATER_SKIP_CHECK=true
                     exec "$SCRIPT_PATH" "$@" # Relaunch the updated script
                 else
                     echo -e "${RED}Error: Failed to replace the script. Please update manually.${NC}"
@@ -128,7 +134,7 @@ if [ "$EUID" -ne 0 ]; then
 
         if [ "$RESPONSE_IS_YES" = true ]; then
             echo -e "${BLUE}Relaunching with sudo...${NC}"
-            exec sudo "$SCRIPT_PATH" "$@" # Relaunch the script with sudo
+            exec sudo NIXUPDATER_SKIP_CHECK=true "$SCRIPT_PATH" "$@" # Relaunch the script with sudo
         else
             echo -e "${RED}Sudo privileges declined. Exiting.${NC}"
             exit 1

@@ -41,10 +41,13 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.3.8"
+SCRIPT_VERSION="1.3.9"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
+if [ "$NIXUPDATER_SKIP_CHECK" = "true" ]; then
+    SKIP_SELF_UPDATE=true
+fi
 for arg in "$@"; do
     if [ "$arg" == "noupdate" ]; then
         SKIP_SELF_UPDATE=true
@@ -55,7 +58,9 @@ done
 SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")" # Get absolute path of the current script
 
 if [ "$SKIP_SELF_UPDATE" = true ]; then
-    echo -e "${YELLOW}Skipping self-update check due to 'noupdate' argument.${NC}"
+    if [ "$NIXUPDATER_SKIP_CHECK" != "true" ]; then
+        echo -e "${YELLOW}Skipping self-update check due to 'noupdate' argument.${NC}"
+    fi
 else
     GITHUB_RAW_URL="https://raw.githubusercontent.com/CleanKM/nixupdater/main/macos/update_macos.sh"
 TEMP_SCRIPT_PATH=$(mktemp)
@@ -94,6 +99,7 @@ else
                 if mv "$TEMP_SCRIPT_PATH" "$SCRIPT_PATH"; then
                     chmod +x "$SCRIPT_PATH"
                     echo -e "${GREEN}Script updated successfully. Relaunching...${NC}"
+                    export NIXUPDATER_SKIP_CHECK=true
                     exec "$SCRIPT_PATH" "$@" # Relaunch the updated script
                 else
                     echo -e "${RED}Error: Failed to replace the script. Please update manually.${NC}"
