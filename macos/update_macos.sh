@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Export robust PATH to ensure Homebrew/MacPorts are accessible in headless contexts
+export PATH="/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:/opt/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+
 # Function to get SHA256 checksum (cross-platform)
 get_sha256() {
     if command -v sha256sum &> /dev/null; then
@@ -8,6 +11,15 @@ get_sha256() {
         shasum -a 256 "$1" | awk '{print $1}'
     else
         echo "" # Indicate failure
+    fi
+}
+
+# Helper function to run Homebrew as the non-root user when elevated
+run_brew() {
+    if [ "$EUID" -eq 0 ] && [ -n "$SUDO_USER" ]; then
+        sudo -u "$SUDO_USER" brew "$@"
+    else
+        brew "$@"
     fi
 }
 
@@ -20,7 +32,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.3.6"
+SCRIPT_VERSION="1.3.7"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
@@ -165,7 +177,7 @@ else
         read -r response < /dev/tty
         if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
             echo -e "${BLUE}Installing 'mas'...${NC}"
-            brew install mas
+            run_brew install mas
             if command -v mas &> /dev/null; then
                 MAS_INSTALLED=true
                 echo -e "${GREEN}'mas' installed successfully.${NC}"
@@ -193,10 +205,10 @@ BREW_UPDATES=""
 BREW_CASK_UPDATES=""
 if [[ " ${PACKAGE_MANAGERS[*]} " =~ " brew " ]]; then
     echo -n -e "${BLUE}Checking for Homebrew updates...${NC}"
-    (brew update >/dev/null 2>&1) &
+    (run_brew update >/dev/null 2>&1) &
     spinner $!
-    BREW_UPDATES=$(brew outdated)
-    BREW_CASK_UPDATES=$(brew outdated --cask)
+    BREW_UPDATES=$(run_brew outdated)
+    BREW_CASK_UPDATES=$(run_brew outdated --cask)
     echo -e "${GREEN}Done!${NC}"
 fi
 
@@ -254,7 +266,7 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$BREW_UPDATES" ] || [ -n "$BREW_CASK_UPDATE
     # System Upgrade
     if [ -n "$SYSTEM_UPDATES" ]; then
         echo "$SYSTEM_UPDATES" | while IFS= read -r line; do
-            label=$(echo "$line" | sed -E 's/^\s*\*\s*(.+)\s+\(.+\)\s+-.+/\1/')
+            label=$(echo "$line" | sed -nE 's/^[[:space:]]*\*[[:space:]]*(.+)[[:space:]]+\([^)]+\)[[:space:]]+-.+/\1/p')
             if [ -n "$label" ]; then
                 echo -e "${YELLOW}Do you want to install update: ${BLUE}'$label'${YELLOW}? (y/n)${NC}"
                 read -r response_individual < /dev/tty
@@ -277,12 +289,12 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$BREW_UPDATES" ] || [ -n "$BREW_CASK_UPDATE
     if [[ " ${PACKAGE_MANAGERS[*]} " =~ " brew " ]]; then
         if [ -n "$BREW_UPDATES" ]; then
             echo -e "${BLUE}Upgrading Homebrew formulae...${NC}"
-            brew upgrade
+            run_brew upgrade
             echo -e "${GREEN}Homebrew formulae upgrade complete.${NC}"
         fi
         if [ -n "$BREW_CASK_UPDATES" ]; then
             echo -e "${BLUE}Upgrading Homebrew casks...${NC}"
-            brew upgrade --cask
+            run_brew upgrade --cask
             echo -e "${GREEN}Homebrew cask upgrade complete.${NC}"
         fi
     fi
@@ -311,8 +323,8 @@ echo -e "${MAGENTA}--- Cleaning up system ---${NC}"
 # Homebrew Cleanup
 if [[ " ${PACKAGE_MANAGERS[*]} " =~ " brew " ]]; then
     echo -e "${BLUE}Cleaning up Homebrew...${NC}"
-    brew cleanup
-    brew autoremove
+    run_brew cleanup
+    run_brew autoremove
     echo -e "${GREEN}Done!${NC}"
 fi
 
@@ -326,7 +338,7 @@ fi
 # Clean package cache
 if [[ " ${PACKAGE_MANAGERS[*]} " =~ " brew " ]]; then
     echo -e "${BLUE}Clearing Homebrew cache...${NC}"
-    brew cleanup -s
+    run_brew cleanup -s
     echo -e "${GREEN}Done!${NC}"
 fi
 

@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Export robust PATH to ensure all tools (including Linuxbrew) are accessible in headless contexts
+export PATH="/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+
 # Function to get SHA256 checksum (cross-platform)
 get_sha256() {
     if command -v sha256sum &> /dev/null; then
@@ -8,6 +11,15 @@ get_sha256() {
         shasum -a 256 "$1" | awk '{print $1}'
     else
         echo "" # Indicate failure
+    fi
+}
+
+# Helper function to run Homebrew as the non-root user when elevated
+run_brew() {
+    if [ "$EUID" -eq 0 ] && [ -n "$SUDO_USER" ]; then
+        sudo -u "$SUDO_USER" brew "$@"
+    else
+        brew "$@"
     fi
 }
 
@@ -20,7 +32,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.8.0"
+SCRIPT_VERSION="1.8.1"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
@@ -340,7 +352,7 @@ fi
 BREW_UPDATES=""
 if command -v brew &> /dev/null; then
     echo -n -e "${BLUE}Checking for Homebrew updates...${NC}"
-    BREW_UPDATES=$(brew outdated 2>/dev/null)
+    BREW_UPDATES=$(run_brew outdated 2>/dev/null)
     echo -e "${GREEN}Done!${NC}"
 else
     echo -e "${YELLOW}Homebrew not found. Skipping Homebrew check.${NC}"
@@ -652,8 +664,8 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
     # Homebrew Upgrade
     if [ -n "$BREW_UPDATES" ]; then
         echo -e "${BLUE}Upgrading Homebrew packages...${NC}"
-        brew upgrade
-        brew cleanup
+        run_brew upgrade
+        run_brew cleanup
         echo -e "${GREEN}Homebrew upgrade complete.${NC}"
     fi
 fi
@@ -722,8 +734,17 @@ if [ "$PACKAGE_MANAGER" = "apt" ]; then
         echo -e "${YELLOW}Found old kernel packages that can be removed:${NC}"
         printf "${CYAN}%s${NC}\n" "${OLD_KERNELS[@]}"
         echo -e "${YELLOW}Do you want to remove these old kernels? (y/n)${NC}"
-        read -r response < /dev/tty
-        if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+        RESPONSE_IS_YES=false
+        if [ -t 1 ]; then
+            read -r response < /dev/tty
+            if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+                RESPONSE_IS_YES=true
+            fi
+        else
+            echo -e "${YELLOW}Non-interactive mode detected. Skipping old kernel removal.${NC}"
+        fi
+
+        if [ "$RESPONSE_IS_YES" = true ]; then
             echo -e "${BLUE}Removing old kernels...${NC}"
             $SUDO apt-get purge -y "${OLD_KERNELS[@]}"
             echo -e "${GREEN}Old kernels removed.${NC}"
