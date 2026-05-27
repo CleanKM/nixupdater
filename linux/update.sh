@@ -32,7 +32,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.8.2"
+SCRIPT_VERSION="1.8.3"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
@@ -376,7 +376,7 @@ if command -v docker &> /dev/null; then
         echo -e "${YELLOW}Docker-related update found.${NC}"
         
         # 1. Identify Compose Project Configs (Running only)
-        COMPOSE_CONFIGS=$($SUDO docker ps --filter "label=com.docker.compose.project.config_files" --format '{{ index .Labels "com.docker.compose.project.config_files" }}' | awk 'NF' | sort -u)
+        COMPOSE_CONFIGS=$($SUDO docker ps --filter "label=com.docker.compose.project.config_files" --format '{{.Label "com.docker.compose.project.config_files"}}' | awk 'NF' | sort -u)
         
         # 2. Identify Standalone Containers (Running only)
         # First grab all running, then omit compose ones
