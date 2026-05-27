@@ -23,6 +23,15 @@ run_brew() {
     fi
 }
 
+# Helper function to run App Store CLI (mas) as the non-root user when elevated
+run_mas() {
+    if [ "$EUID" -eq 0 ] && [ -n "$SUDO_USER" ]; then
+        sudo -u "$SUDO_USER" mas "$@"
+    else
+        mas "$@"
+    fi
+}
+
 # --- Color Codes ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -32,7 +41,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.3.7"
+SCRIPT_VERSION="1.3.8"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
@@ -215,7 +224,7 @@ fi
 MAS_UPDATES=""
 if [ "$MAS_INSTALLED" = true ]; then
     echo -n -e "${BLUE}Checking for App Store updates...${NC}"
-    MAS_UPDATES=$(mas outdated)
+    MAS_UPDATES=$(run_mas outdated)
     echo -e "${GREEN}Done!${NC}"
 fi
 
@@ -268,9 +277,18 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$BREW_UPDATES" ] || [ -n "$BREW_CASK_UPDATE
         echo "$SYSTEM_UPDATES" | while IFS= read -r line; do
             label=$(echo "$line" | sed -nE 's/^[[:space:]]*\*[[:space:]]*(.+)[[:space:]]+\([^)]+\)[[:space:]]+-.+/\1/p')
             if [ -n "$label" ]; then
-                echo -e "${YELLOW}Do you want to install update: ${BLUE}'$label'${YELLOW}? (y/n)${NC}"
-                read -r response_individual < /dev/tty
-                if [[ "$response_individual" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+                RESPONSE_IS_YES=false
+                if [ -t 1 ]; then
+                    echo -e "${YELLOW}Do you want to install update: ${BLUE}'$label'${YELLOW}? (y/n)${NC}"
+                    read -r response_individual < /dev/tty
+                    if [[ "$response_individual" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+                        RESPONSE_IS_YES=true
+                    fi
+                else
+                    echo -e "${YELLOW}Non-interactive mode detected. Skipping installation of update: '$label'.${NC}"
+                fi
+
+                if [ "$RESPONSE_IS_YES" = true ]; then
                     echo -e "${BLUE}Installing update: '$label'...${NC}"
                     $SUDO softwareupdate -i "$label"
                     if echo "$line" | grep -q -i "restart"; then
@@ -303,7 +321,7 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$BREW_UPDATES" ] || [ -n "$BREW_CASK_UPDATE
     if [ "$MAS_INSTALLED" = true ] && [ -n "$MAS_UPDATES" ]; then
         echo -e "${BLUE}Upgrading App Store applications...${NC}"
         # The spinner is not ideal here as mas can prompt for password
-        mas upgrade
+        run_mas upgrade
         echo -e "${GREEN}App Store upgrade complete.${NC}"
     fi
 
@@ -363,7 +381,7 @@ echo -e "${MAGENTA}--- Open Ports on System ---${NC}"
 # Check for lsof
 if command -v lsof &> /dev/null; then
     echo -e "${BLUE}Listing listening TCP and UDP ports with lsof...${NC}"
-    $SUDO lsof -i -P -n | grep LISTEN
+    $SUDO lsof -i -P -n | grep -E 'LISTEN|UDP'
 elif command -v netstat &> /dev/null; then
     echo -e "${BLUE}lsof not found. Using 'netstat' to list listening TCP and UDP ports...${NC}"
     $SUDO netstat -anv | grep LISTEN

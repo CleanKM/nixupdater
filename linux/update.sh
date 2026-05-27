@@ -32,7 +32,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.8.1"
+SCRIPT_VERSION="1.8.2"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
@@ -371,7 +371,8 @@ fi
 DOCKER_STANDALONE_TO_RESTART=""
 DOCKER_COMPOSE_TO_RESTART=""
 if command -v docker &> /dev/null; then
-    if echo "$SYSTEM_UPDATES" | grep -qiE '\b(docker|containerd)\b'; then
+    ALL_UPDATES_TEXT="${SYSTEM_UPDATES}${SNAP_UPDATES}${BREW_UPDATES}"
+    if echo "$ALL_UPDATES_TEXT" | grep -qiE '\b(docker|containerd)\b'; then
         echo -e "${YELLOW}Docker-related update found.${NC}"
         
         # 1. Identify Compose Project Configs (Running only)
@@ -706,7 +707,16 @@ case "$PACKAGE_MANAGER" in
             REBOOT_NEEDED=true
         fi
         ;;
-    "pacman" | "apk" | "nixos")
+    "pacman" | "apk")
+        # Check if modules directory for active kernel still exists.
+        # If it was upgraded, pacman/apk removes the old modules folder, meaning a reboot is required.
+        if [ ! -d "/usr/lib/modules/$(uname -r)" ] && [ -d "/usr/lib/modules" ]; then
+            REBOOT_NEEDED=true
+        else
+            echo -e "${YELLOW}Reboot check not automated for this package manager. Please reboot manually if a kernel was updated.${NC}"
+        fi
+        ;;
+    "nixos")
         echo -e "${YELLOW}Reboot check not automated for this package manager. Please reboot manually if a kernel was updated.${NC}"
         ;;
 esac
@@ -955,7 +965,7 @@ fi
 # Now, list the ports
 if [ "$LSOF_INSTALL_SUCCESS" = true ]; then
     echo -e "${BLUE}Listing listening TCP and UDP ports with lsof...${NC}"
-    $SUDO lsof -i -P -n | grep LISTEN
+    $SUDO lsof -i -P -n | grep -E 'LISTEN|UDP'
 elif command -v ss &> /dev/null; then
     echo -e "${BLUE}lsof not found. Using 'ss' to list listening TCP and UDP ports...${NC}"
     $SUDO ss -tuln
