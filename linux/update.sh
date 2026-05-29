@@ -32,7 +32,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.8.4"
+SCRIPT_VERSION="1.8.5"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
@@ -938,30 +938,47 @@ fi
 echo ""
 echo -e "${MAGENTA}--- Open Ports on System ---""${NC}"
 
-# Check for lsof and install if not present
+# Check for lsof and install if the user consents
 LSOF_INSTALL_SUCCESS=false
 if ! command -v lsof &> /dev/null; then
-    echo -e "${YELLOW}'lsof' command not found. Attempting to install...${NC}"
-    case "$PACKAGE_MANAGER" in
-        "apt")
-            $SUDO apt install -y lsof
-            ;;
-        "dnf")
-            $SUDO dnf install -y lsof
-            ;;
-        "pacman")
-            $SUDO pacman -S --noconfirm lsof
-            ;;
-        "apk")
-            $SUDO apk add lsof
-            ;;
-    esac
-    # Verify lsof installation
-    if ! command -v lsof &> /dev/null; then
-        echo -e "${RED}Failed to install 'lsof'. Open ports will not be displayed.${NC}"
-        LSOF_INSTALL_SUCCESS=false
+    echo -e "${YELLOW}'lsof' command not found.${NC}"
+    
+    RESPONSE_IS_YES=false
+    if [ -t 1 ]; then
+        echo -e "${YELLOW}Would you like to install 'lsof' to list open ports? (y/n)${NC}"
+        read -r response < /dev/tty
+        if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+            RESPONSE_IS_YES=true
+        fi
     else
-        LSOF_INSTALL_SUCCESS=true
+        echo -e "${YELLOW}Non-interactive mode detected. Skipping 'lsof' installation.${NC}"
+    fi
+
+    if [ "$RESPONSE_IS_YES" = true ]; then
+        echo -e "${BLUE}Attempting to install 'lsof'...${NC}"
+        case "$PACKAGE_MANAGER" in
+            "apt")
+                $SUDO apt install -y lsof
+                ;;
+            "dnf")
+                $SUDO dnf install -y lsof
+                ;;
+            "pacman")
+                $SUDO pacman -S --noconfirm lsof
+                ;;
+            "apk")
+                $SUDO apk add lsof
+                ;;
+        esac
+        # Verify lsof installation
+        if ! command -v lsof &> /dev/null; then
+            echo -e "${RED}Failed to install 'lsof'. Falling back to alternative port listing tools.${NC}"
+            LSOF_INSTALL_SUCCESS=false
+        else
+            LSOF_INSTALL_SUCCESS=true
+        fi
+    else
+        LSOF_INSTALL_SUCCESS=false
     fi
 else
     # lsof was found initially, confirm success
