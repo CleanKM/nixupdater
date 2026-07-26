@@ -32,7 +32,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.8.5"
+SCRIPT_VERSION="1.8.6"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
@@ -46,7 +46,7 @@ for arg in "$@"; do
     fi
 done
 
-SCRIPT_PATH="$(readlink -f "$0")" # Get absolute path of the current script
+SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")" # Get absolute path of the current script
 
 if [ "$SKIP_SELF_UPDATE" = true ]; then
     if [ "$NIXUPDATER_SKIP_CHECK" != "true" ]; then
@@ -60,12 +60,15 @@ trap 'rm -f "$TEMP_SCRIPT_PATH"' EXIT
 # Check if curl is available
 if ! command -v curl &> /dev/null; then
     echo -e "${YELLOW}Warning: 'curl' not found. Cannot check for script updates.${NC}"
+    rm -f "$TEMP_SCRIPT_PATH"
+    trap - EXIT
 else
     # Download remote script with cache-busting and network timeouts
     CACHE_BUSTER=$(date +%s)
     if ! curl -sSfL --connect-timeout 5 --max-time 10 -H "Cache-Control: no-cache" "$GITHUB_RAW_URL?t=$CACHE_BUSTER" -o "$TEMP_SCRIPT_PATH"; then
         echo -e "${RED}Error: Failed to download remote script or network is down. Skipping self-update.${NC}"
         rm -f "$TEMP_SCRIPT_PATH"
+        trap - EXIT
     else
         LOCAL_CHECKSUM=$(get_sha256 "$SCRIPT_PATH")
         REMOTE_CHECKSUM=$(get_sha256 "$TEMP_SCRIPT_PATH")
@@ -73,6 +76,7 @@ else
         if [ -z "$LOCAL_CHECKSUM" ] || [ -z "$REMOTE_CHECKSUM" ]; then
             echo -e "${RED}Error: Checksum utility not found or failed. Skipping self-update.${NC}"
             rm -f "$TEMP_SCRIPT_PATH"
+            trap - EXIT
         elif [ "$LOCAL_CHECKSUM" != "$REMOTE_CHECKSUM" ]; then
             echo -e "${YELLOW}A new version of the script is available!${NC}"
             echo -e "${YELLOW}Do you want to update to the latest version? (y/n)${NC}"
@@ -94,18 +98,22 @@ else
                     chmod +x "$SCRIPT_PATH"
                     echo -e "${GREEN}Script updated successfully. Relaunching...${NC}"
                     export NIXUPDATER_SKIP_CHECK=true
+                    trap - EXIT
                     exec "$SCRIPT_PATH" "$@" # Relaunch the updated script
                 else
                     echo -e "${RED}Error: Failed to replace the script. Please update manually.${NC}"
                     rm -f "$TEMP_SCRIPT_PATH"
+                    trap - EXIT
                 fi
             else
                 echo -e "${YELLOW}Skipping script update.${NC}"
                 rm -f "$TEMP_SCRIPT_PATH"
+                trap - EXIT
             fi
         else
             echo -e "${GREEN}Script is already up to date.${NC}"
             rm -f "$TEMP_SCRIPT_PATH"
+            trap - EXIT
         fi
     fi
 fi
@@ -502,7 +510,7 @@ fi
 
 # --- Upgrade ---
 if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES" ] || [ -n "$BREW_UPDATES" ]; then
-    echo -e "${YELLOW}--- Pending Updates ---""${NC}"
+    echo -e "${YELLOW}--- Pending Updates ---${NC}"
     if [ -n "$SYSTEM_UPDATES" ]; then
         echo -e "${CYAN}--- System Updates ---""${NC}"
         echo "$SYSTEM_UPDATES"
@@ -735,16 +743,17 @@ else
 fi
 
 echo ""
-echo -e "${MAGENTA}--- Cleaning up system ---""${NC}"
+echo -e "${MAGENTA}--- Cleaning up system ---${NC}"
 
 # Old Kernel Cleanup (Debian-based systems)
 if [ "$PACKAGE_MANAGER" = "apt" ]; then
     echo -e "${BLUE}Checking for old kernels to remove...${NC}"
-    # Get the current kernel version to ensure we don't remove it
+    # Get the running kernel version and highest installed kernel version to prevent purging newly upgraded kernels
     CURRENT_KERNEL=$(uname -r)
+    LATEST_KERNEL=$(dpkg-query -W -f='${Package}\n' 'linux-image-[0-9]*' 2>/dev/null | grep -E '^linux-image-[0-9]' | sed 's/linux-image-//' | sort -V | tail -n 1)
     
-    # Find all installed kernel packages, excluding the current one
-    mapfile -t OLD_KERNELS < <(dpkg --list | grep -E 'linux-(image|headers)-[0-9]+' | awk '{ print $2 }' | grep -vF "$CURRENT_KERNEL")
+    # Find all installed kernel packages (state 'ii'), excluding running and newest kernel
+    mapfile -t OLD_KERNELS < <(dpkg --list | grep -E '^\s*ii\s+linux-(image|headers)-[0-9]+' | awk '{ print $2 }' | grep -vF "$CURRENT_KERNEL" | { if [ -n "$LATEST_KERNEL" ]; then grep -vF "$LATEST_KERNEL"; else cat; fi; })
 
     if [ ${#OLD_KERNELS[@]} -gt 0 ]; then
         echo -e "${YELLOW}Found old kernel packages that can be removed:${NC}"
@@ -835,7 +844,7 @@ esac
 echo -e "${GREEN}Done!${NC}"
 
 echo ""
-echo -e "${MAGENTA}--- Distribution Upgrade Check ---""${NC}"
+echo -e "${MAGENTA}--- Distribution Upgrade Check ---${NC}"
 case "$PACKAGE_MANAGER" in
     "apt")
         # Flag to see if we found an upgrade
@@ -900,7 +909,7 @@ case "$PACKAGE_MANAGER" in
 esac
 
 echo ""
-echo -e "${MAGENTA}--- Clearing Old Logs ---""${NC}"
+echo -e "${MAGENTA}--- Clearing Old Logs ---${NC}"
 if command -v journalctl &> /dev/null; then
     echo -e "${BLUE}Using journalctl to clear logs older than 10 days...${NC}"
     $SUDO journalctl --vacuum-time=10d
@@ -936,7 +945,7 @@ fi
 
 # --- Open Ports on System ---
 echo ""
-echo -e "${MAGENTA}--- Open Ports on System ---""${NC}"
+echo -e "${MAGENTA}--- Open Ports on System ---${NC}"
 
 # Check for lsof and install if the user consents
 LSOF_INSTALL_SUCCESS=false

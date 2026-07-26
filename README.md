@@ -26,7 +26,7 @@ This script is a robust update tool for Linux distributions. It intelligently de
 *   **Sudo-Safe Homebrew (Linuxbrew) Execution:** Automatically demotes Homebrew operations back to the original non-root user account when the script is run elevated under `sudo`, preventing permission locks.
 *   **System Maintenance:** Includes routines for removing unnecessary packages (`autoremove`) safely and clearing package caches conservatively across all supported package managers.
 *   **Debian/Ubuntu Health Checks:** For Debian-based systems, it checks for held packages.
-*   **Old Kernel Cleanup:** On Debian-based systems, it identifies and offers to remove old, unused kernels to free up disk space.
+*   **Old Kernel Cleanup:** On Debian-based systems, it identifies and offers to remove old, unused kernels to free up disk space while preserving both the active running kernel and the latest installed kernel version across upgrades.
 *   **Intelligent Reboot Check:** Evaluates system reboot triggers dynamically, including Debian/Ubuntu files, `dnf-utils` reboot checks, pending OSTree deployments, transactional snapshot states, and rolling-release kernel module mismatch detectors (checks if active kernel module folder was deleted).
 *   **Upgrade Checks:** Notifies about available distribution-level upgrades and firmware updates (via `fwupdmgr`).
 *   **Log Cleanup:** Clears old system logs to free up space.
