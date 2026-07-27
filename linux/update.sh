@@ -14,13 +14,18 @@ get_sha256() {
     fi
 }
 
+# Helper function to run commands as non-root user when elevated
+run_as_user() {
+    if [ "$EUID" -eq 0 ] && [ -n "$SUDO_USER" ]; then
+        sudo -u "$SUDO_USER" "$@"
+    else
+        "$@"
+    fi
+}
+
 # Helper function to run Homebrew as the non-root user when elevated
 run_brew() {
-    if [ "$EUID" -eq 0 ] && [ -n "$SUDO_USER" ]; then
-        sudo -u "$SUDO_USER" brew "$@"
-    else
-        brew "$@"
-    fi
+    run_as_user brew "$@"
 }
 
 # --- Color Codes ---
@@ -32,7 +37,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.8.9"
+SCRIPT_VERSION="1.9.0"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
@@ -241,7 +246,11 @@ else
             PACKAGE_MANAGER="apt"
             ;;
         "fedora" | "centos" | "rhel" | "nobara" | "rocky" | "almalinux")
-            PACKAGE_MANAGER="dnf"
+            if command -v dnf5 &> /dev/null; then
+                PACKAGE_MANAGER="dnf5"
+            else
+                PACKAGE_MANAGER="dnf"
+            fi
             ;;
         "arch" | "manjaro" | "endeavouros" | "garuda")
             PACKAGE_MANAGER="pacman"
@@ -249,18 +258,26 @@ else
         "alpine")
             PACKAGE_MANAGER="apk"
             ;;
+        "opensuse"* | "suse" | "tumbleweed" | "leap")
+            PACKAGE_MANAGER="zypper"
+            ;;
         *)
             if echo "$ID_LIKE" | grep -qE '\b(ubuntu|debian)\b'; then
                 PACKAGE_MANAGER="apt"
             elif echo "$ID_LIKE" | grep -qE '\b(fedora|rhel|centos)\b'; then
-                PACKAGE_MANAGER="dnf"
+                if command -v dnf5 &> /dev/null; then PACKAGE_MANAGER="dnf5"; else PACKAGE_MANAGER="dnf"; fi
             elif echo "$ID_LIKE" | grep -qE '\b(arch)\b'; then
                 PACKAGE_MANAGER="pacman"
             elif echo "$ID_LIKE" | grep -qE '\b(alpine)\b'; then
                 PACKAGE_MANAGER="apk"
+            elif echo "$ID_LIKE" | grep -qE '\b(suse|opensuse)\b'; then
+                PACKAGE_MANAGER="zypper"
             elif command -v apt &> /dev/null; then
                 PACKAGE_MANAGER="apt"
                 echo -e "${GREEN}Found 'apt'. Proceeding.${NC}"
+            elif command -v dnf5 &> /dev/null; then
+                PACKAGE_MANAGER="dnf5"
+                echo -e "${GREEN}Found 'dnf5'. Proceeding.${NC}"
             elif command -v dnf &> /dev/null; then
                 PACKAGE_MANAGER="dnf"
                 echo -e "${GREEN}Found 'dnf'. Proceeding.${NC}"
@@ -270,14 +287,29 @@ else
             elif command -v apk &> /dev/null; then
                 PACKAGE_MANAGER="apk"
                 echo -e "${GREEN}Found 'apk'. Proceeding.${NC}"
+            elif command -v zypper &> /dev/null; then
+                PACKAGE_MANAGER="zypper"
+                echo -e "${GREEN}Found 'zypper'. Proceeding.${NC}"
             else
-                echo -e "${RED}Could not find a supported package manager (apt, dnf, pacman, apk). Exiting.${NC}"
+                echo -e "${RED}Could not find a supported package manager. Exiting.${NC}"
                 exit 1
             fi
             ;;
     esac
 fi
 echo -e "${BLUE}Using package manager: ${GREEN}$PACKAGE_MANAGER${NC}"
+
+# Check for Arch AUR helpers
+AUR_HELPER=""
+if [ "$PACKAGE_MANAGER" = "pacman" ]; then
+    if command -v yay &> /dev/null; then
+        AUR_HELPER="yay"
+        echo -e "${BLUE}Found Arch AUR helper: ${GREEN}yay${NC}"
+    elif command -v paru &> /dev/null; then
+        AUR_HELPER="paru"
+        echo -e "${BLUE}Found Arch AUR helper: ${GREEN}paru${NC}"
+    fi
+fi
 echo ""
 
 # --- Debian/Ubuntu Specific Checks ---
@@ -303,22 +335,27 @@ echo -n -e "${BLUE}Checking for system updates...${NC}"
 (
 case "$PACKAGE_MANAGER" in
     "apt")
-        $SUDO apt update >/dev/null 2>&1
+        $SUDO DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update >/dev/null 2>&1
         ;;
-    "dnf")
-        # dnf check-update runs without sudo and is fast
+    "dnf5" | "dnf")
         ;;
     "pacman")
-        $SUDO pacman -Sy >/dev/null 2>&1
+        if command -v checkupdates &> /dev/null; then
+            :
+        else
+            $SUDO pacman -Sy >/dev/null 2>&1
+        fi
         ;;
     "apk")
         $SUDO apk update >/dev/null 2>&1
+        ;;
+    "zypper")
+        $SUDO zypper refresh >/dev/null 2>&1
         ;;
     "rpm-ostree")
         rpm-ostree upgrade --check >/dev/null 2>&1
         ;;
     "transactional-update" | "nixos")
-        # Checking is either bundled with upgrade or omitted to save time
         ;;
 esac
 ) & 
@@ -328,16 +365,26 @@ echo -e "${GREEN}Done!${NC}"
 SYSTEM_UPDATES=$(
 case "$PACKAGE_MANAGER" in
     ("apt")
-        apt list --upgradable 2>/dev/null | tail -n +2
+        apt-get --just-print upgrade 2>/dev/null | grep "^Inst "
+        ;;
+    ("dnf5")
+        dnf5 check-update 2>/dev/null | tail -n +2
         ;;
     ("dnf")
-        dnf check-update | tail -n +2
+        dnf check-update 2>/dev/null | tail -n +2
         ;;
     ("pacman")
-        pacman -Qu
+        if command -v checkupdates &> /dev/null; then
+            checkupdates 2>/dev/null
+        else
+            pacman -Qu 2>/dev/null
+        fi
         ;;
     ("apk")
-        apk list --upgradeable 2>/dev/null | tail -n +1 # apk list --upgradeable includes a header
+        apk list --upgradeable 2>/dev/null | tail -n +1
+        ;;
+    ("zypper")
+        zypper list-updates 2>/dev/null | grep -E '^v \|'
         ;;
     ("rpm-ostree")
         rpm-ostree status -v | grep -q -E "AvailableUpdate: yes|Staged: yes" && echo "OSTree updates are available (pending deployment)."
@@ -548,29 +595,49 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
         echo -e "${BLUE}Upgrading system packages...${NC}"
         case "$PACKAGE_MANAGER" in
             "apt")
-                $SUDO apt upgrade -y
+                $SUDO DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get upgrade -y
+                ;;
+            "dnf5")
+                $SUDO dnf5 upgrade -y
                 ;;
             "dnf")
-                     $SUDO dnf upgrade -y
+                $SUDO dnf upgrade -y
                 ;;
             "pacman")
+                if [ -n "$AUR_HELPER" ]; then
+                    echo -e "${BLUE}Upgrading system and AUR packages using $AUR_HELPER...${NC}"
+                    run_as_user "$AUR_HELPER" -Syu --noconfirm
+                else
                     $SUDO pacman -Syu --noconfirm
+                fi
                 ;;
             "apk")
-                    $SUDO apk upgrade
+                $SUDO apk upgrade
+                ;;
+            "zypper")
+                if grep -q -i "tumbleweed" /etc/os-release 2>/dev/null; then
+                    $SUDO zypper --non-interactive dup
+                else
+                    $SUDO zypper --non-interactive up
+                fi
                 ;;
             "rpm-ostree")
-                    if command -v bootc &> /dev/null && ! grep -q -E -e "LockLayering=false" /etc/rpm-ostreed.conf 2>/dev/null; then
-                        $SUDO bootc upgrade
-                    else
-                        $SUDO rpm-ostree upgrade
-                    fi
+                if command -v bootc &> /dev/null && ! grep -q -E -e "LockLayering=false" /etc/rpm-ostreed.conf 2>/dev/null; then
+                    $SUDO bootc upgrade
+                else
+                    $SUDO rpm-ostree upgrade
+                fi
                 ;;
             "transactional-update")
-                    $SUDO transactional-update dup
+                $SUDO transactional-update dup
                 ;;
             "nixos")
+                if [ -f /etc/nixos/flake.nix ] || [ -f /etc/nixos/flake.lock ]; then
+                    echo -e "${BLUE}Updating NixOS Flake...${NC}"
+                    $SUDO nix flake update --flake /etc/nixos && $SUDO nixos-rebuild switch --upgrade
+                else
                     $SUDO nix-channel --update && $SUDO nixos-rebuild switch --upgrade
+                fi
                 ;;
         esac
         echo -e "${GREEN}System upgrade complete.${NC}"
@@ -677,8 +744,9 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
     # Flatpak Upgrade
     if [ -n "$FLATPAK_UPDATES" ]; then
         echo -e "${BLUE}Upgrading Flatpak packages...${NC}"
-        # pv is not ideal for flatpak's output, so we run it directly.
         flatpak update -y
+        echo -e "${BLUE}Removing unused Flatpak runtimes...${NC}"
+        flatpak uninstall --unused -y 2>/dev/null || true
         echo -e "${GREEN}Flatpak upgrade complete.${NC}"
     fi
 
@@ -708,19 +776,30 @@ case "$PACKAGE_MANAGER" in
             REBOOT_REASON_PKGS=$(cat /var/run/reboot-required.pkgs 2>/dev/null)
         fi
         ;;
-    "dnf")
-        # needs-restarting is in dnf-utils
-        if ! command -v needs-restarting &> /dev/null; then
-            echo -e "${YELLOW}'needs-restarting' command not found. Attempting to install 'dnf-utils'...${NC}"
-            $SUDO dnf install -y dnf-utils >/dev/null 2>&1
-        fi
-        if command -v needs-restarting &> /dev/null; then
-            # Exit code 1 means reboot is required.
-            if $SUDO needs-restarting -r > /dev/null 2>&1; then
-                : # Exit code 0, no reboot needed
+    "dnf5" | "dnf")
+        if command -v dnf5 &> /dev/null; then
+            if $SUDO dnf5 needs-restarting -r > /dev/null 2>&1; then
+                :
             else
                 REBOOT_NEEDED=true
             fi
+        else
+            if ! command -v needs-restarting &> /dev/null; then
+                echo -e "${YELLOW}'needs-restarting' command not found. Attempting to install 'dnf-utils'...${NC}"
+                $SUDO dnf install -y dnf-utils >/dev/null 2>&1
+            fi
+            if command -v needs-restarting &> /dev/null; then
+                if $SUDO needs-restarting -r > /dev/null 2>&1; then
+                    :
+                else
+                    REBOOT_NEEDED=true
+                fi
+            fi
+        fi
+        ;;
+    "zypper")
+        if $SUDO zypper ps -s 2>/dev/null | grep -qi "reboot"; then
+            REBOOT_NEEDED=true
         fi
         ;;
     "rpm-ostree")
@@ -729,14 +808,11 @@ case "$PACKAGE_MANAGER" in
         fi
         ;;
     "transactional-update")
-        # If an update happened, it always stages for the next reboot in MicroOS
         if [ -n "$SYSTEM_UPDATES" ]; then
             REBOOT_NEEDED=true
         fi
         ;;
     "pacman" | "apk")
-        # Check if modules directory for active kernel still exists.
-        # If it was upgraded, pacman/apk removes the old modules folder, meaning a reboot is required.
         if [ ! -d "/usr/lib/modules/$(uname -r)" ] && [ -d "/usr/lib/modules" ]; then
             REBOOT_NEEDED=true
         else
@@ -798,13 +874,15 @@ fi
 echo -e "${BLUE}Removing unnecessary packages...${NC}"
 case "$PACKAGE_MANAGER" in
     "apt")
-        $SUDO apt autoremove -y
+        $SUDO DEBIAN_FRONTEND=noninteractive apt-get autoremove -y
+        ;;
+    "dnf5")
+        $SUDO dnf5 autoremove -y
         ;;
     "dnf")
         $SUDO dnf autoremove -y
         ;;
     "pacman")
-        # First, find orphaned packages, then remove them if any exist.
         if [[ -n $($SUDO pacman -Qdtq) ]]; then
             $SUDO pacman -Qdtq | xargs $SUDO pacman -Rns --noconfirm
         else
@@ -812,10 +890,10 @@ case "$PACKAGE_MANAGER" in
         fi
         ;;
     "apk")
-        # apk does not have a direct 'autoremove' equivalent like apt/dnf.
-        # Users typically manage explicitly installed packages and their dependencies.
         echo "apk does not have a direct 'autoremove' equivalent."
-        echo "Consider manually removing unneeded packages if necessary."
+        ;;
+    "zypper")
+        echo "zypper manages dependencies automatically during upgrades."
         ;;
     "rpm-ostree")
         echo "rpm-ostree images are managed atomically. No autoremove required."
@@ -825,24 +903,37 @@ case "$PACKAGE_MANAGER" in
         ;;
     "nixos")
         $SUDO nix-collect-garbage -d
+        echo -e "${BLUE}Optimizing Nix store...${NC}"
+        $SUDO nix-store --optimise
         ;;
 esac
 echo -e "${GREEN}Done!${NC}"
 
-# Clean package cache
+# Clean package cache & disabled snaps
 echo -e "${BLUE}Clearing package cache...${NC}"
 case "$PACKAGE_MANAGER" in
     "apt")
-        $SUDO apt clean
+        $SUDO apt-get clean
+        ;;
+    "dnf5")
+        $SUDO dnf5 clean all
         ;;
     "dnf")
         $SUDO dnf clean all
         ;;
     "pacman")
-        $SUDO pacman -Sc --noconfirm # -Sc removes unneeded cached packages while keeping the latest version.
+        if command -v paccache &> /dev/null; then
+            echo -e "${BLUE}Cleaning pacman cache retaining last 3 versions (paccache)...${NC}"
+            $SUDO paccache -r >/dev/null 2>&1 || true
+        else
+            $SUDO pacman -Sc --noconfirm
+        fi
         ;;
     "apk")
-        $SUDO apk cache clean
+        $SUDO apk cache purge 2>/dev/null || $SUDO apk cache clean
+        ;;
+    "zypper")
+        $SUDO zypper clean -a
         ;;
     "rpm-ostree")
         $SUDO rpm-ostree cleanup -m
@@ -851,9 +942,21 @@ case "$PACKAGE_MANAGER" in
         $SUDO transactional-update cleanup
         ;;
     "nixos")
-        echo "NixOS store optimize not strictly required, skipped."
+        echo "NixOS store optimize complete."
         ;;
 esac
+
+# Clean disabled Snap revisions
+if command -v snap &> /dev/null; then
+    echo -e "${BLUE}Checking for disabled Snap revisions to clean up...${NC}"
+    DISABLED_SNAPS=$($SUDO snap list --all 2>/dev/null | awk '/disabled/{print $1, $3}')
+    if [ -n "$DISABLED_SNAPS" ]; then
+        echo "$DISABLED_SNAPS" | while read -r snapname revision; do
+            [ -n "$snapname" ] && [ -n "$revision" ] && $SUDO snap remove "$snapname" --revision="$revision" >/dev/null 2>&1 || true
+        done
+        echo -e "${GREEN}Disabled Snap revisions cleaned.${NC}"
+    fi
+fi
 echo -e "${GREEN}Done!${NC}"
 
 echo ""
@@ -980,7 +1083,10 @@ if ! command -v lsof &> /dev/null; then
         echo -e "${BLUE}Attempting to install 'lsof'...${NC}"
         case "$PACKAGE_MANAGER" in
             "apt")
-                $SUDO apt install -y lsof
+                $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y lsof
+                ;;
+            "dnf5")
+                $SUDO dnf5 install -y lsof
                 ;;
             "dnf")
                 $SUDO dnf install -y lsof
@@ -990,6 +1096,9 @@ if ! command -v lsof &> /dev/null; then
                 ;;
             "apk")
                 $SUDO apk add lsof
+                ;;
+            "zypper")
+                $SUDO zypper --non-interactive in lsof
                 ;;
             *)
                 echo -e "${YELLOW}Automatic installation of 'lsof' is not supported for $PACKAGE_MANAGER.${NC}"

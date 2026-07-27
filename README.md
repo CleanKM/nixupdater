@@ -17,8 +17,12 @@ This script is a robust update tool for Linux distributions. It intelligently de
 
 **Key Features:**
 
-*   **Cross-Distribution Support:** Automatically identifies the Linux distribution (including Debian, Ubuntu, Arch, Alpine, Fedora, openSUSE MicroOS, NixOS, and atomic OSTree systems like Fedora Silverblue) and utilizes the appropriate package manager (`apt`, `dnf`, `pacman`, `apk`, `rpm-ostree`, `bootc`, `transactional-update`, or `nixos-rebuild`).
-*   **Enhanced Sudo Privilege Check & Helper:** Intelligently checks for sudo/root privileges, offering to relaunch with sudo if the user is in the sudo/wheel group.
+*   **Cross-Distribution Support:** Automatically identifies the Linux distribution (including Debian, Ubuntu, Arch, Alpine, Fedora, openSUSE Tumbleweed/Leap, openSUSE MicroOS, NixOS, and atomic OSTree systems like Fedora Silverblue) and utilizes the appropriate package manager (`apt-get`, `dnf5`, `dnf`, `pacman`, `apk`, `zypper`, `rpm-ostree`, `bootc`, `transactional-update`, or `nixos-rebuild`).
+*   **Arch AUR Helper Integration:** Automatically detects and uses Arch User Repository (AUR) helpers (`yay` or `paru`) when available to keep both official packages and AUR packages up to date seamlessly.
+*   **NixOS Flakes & Store Optimization:** Supports modern NixOS Flake setups (`/etc/nixos/flake.nix`) alongside classic channels, and automatically runs `nix-store --optimise` after garbage collection to deduplicate store binaries.
+*   **Headless Debconf & Needrestart Safeguards:** Exports non-interactive flags (`DEBIAN_FRONTEND=noninteractive`, `NEEDRESTART_MODE=a`) for Debian/Ubuntu systems to prevent interactive service restart prompts from stalling execution.
+*   **Enhanced Maintenance & Disk Space Recovery:** Performs unused Flatpak runtime cleanups (`flatpak uninstall --unused`), purges disabled Snap revisions to reclaim disk space, and uses `paccache` for conservative Arch Linux cache retention.
+*   **Enhanced Sudo Privilege Check & Helper:** Intelligently checks for sudo/root privileges using POSIX `id -Gn`, offering to relaunch with sudo if the user is in the sudo/wheel group.
 *   **Version Display:** Shows the script's current version at startup.
 *   **Simple Banner:** Displays a clean, informative banner instead of ASCII art.
 *   **Robust Non-Interactive Execution:** All prompts (including self-updates, sudo relaunch, container restarts, and old kernel cleanup) are TTY-guarded to safely bypass or fail-safe in headless automated/cron environments.
@@ -27,10 +31,10 @@ This script is a robust update tool for Linux distributions. It intelligently de
 *   **System Maintenance:** Includes routines for removing unnecessary packages (`autoremove`) safely and clearing package caches conservatively across all supported package managers.
 *   **Debian/Ubuntu Health Checks:** For Debian-based systems, it checks for held packages.
 *   **Old Kernel Cleanup:** On Debian-based systems, it identifies and offers to remove old, unused kernels to free up disk space while preserving both the active running kernel and the latest installed kernel version across upgrades.
-*   **Intelligent Reboot Check:** Evaluates system reboot triggers dynamically, including Debian/Ubuntu files, `dnf-utils` reboot checks, pending OSTree deployments, transactional snapshot states, and rolling-release kernel module mismatch detectors (checks if active kernel module folder was deleted).
+*   **Intelligent Reboot Check:** Evaluates system reboot triggers dynamically, including Debian/Ubuntu files, `dnf5` and `dnf-utils` reboot checks, openSUSE `zypper ps`, pending OSTree deployments, transactional snapshot states, and rolling-release kernel module mismatch detectors.
 *   **Upgrade Checks:** Notifies about available distribution-level upgrades and firmware updates (via `fwupdmgr`).
 *   **Log Cleanup:** Clears old system logs to free up space.
-*   **Open Ports:** Lists currently open TCP and UDP ports on the system using `lsof`, `ss`, or `netstat` as fallbacks, utilizing advanced filtering to show both listening TCP sockets and open UDP ports accurately.
+*   **Open Ports:** Lists currently open TCP and UDP ports on the system using `lsof`, `ss`, or `netstat` as fallbacks, utilizing advanced filtering to show both listening TCP sockets and open UDP ports accurately while preserving table column headers.
 *   **Docker Integration:** Stops Docker containers before system upgrades if Docker-related packages (checked across system packages, snaps, and Homebrew) are being updated, and restarts them afterward.
 *   **Dependency Handling:** Safely prompts for user consent before attempting to install `lsof` to list open ports, falling back seamlessly to `ss` or `netstat` if declined, running headless, or running on an immutable OS (e.g., Fedora Silverblue, MicroOS).
 *   **Advanced Docker & Compose Integration:** Categorizes running containers into Standalone and Compose projects at startup. If Docker-related updates are required, it provides an interactive selection menu to choose exactly which containers to safely spin down. Post-update, it supplies an ordered-restart menu so you can boot interdependent Compose networks and standalone databases in a precise operational sequence. Validates states specifically for targeted containers.
