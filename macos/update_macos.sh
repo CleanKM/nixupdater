@@ -41,7 +41,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.4.2"
+SCRIPT_VERSION="1.5.0"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
@@ -335,7 +335,15 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$BREW_UPDATES" ] || [ -n "$BREW_CASK_UPDATE
         fi
         if [ -n "$BREW_CASK_UPDATES" ]; then
             echo -e "${BLUE}Upgrading Homebrew casks...${NC}"
-            run_brew upgrade --cask
+            GREEDY_FLAG=""
+            if [ -t 1 ]; then
+                echo -e "${YELLOW}Include casks with internal auto-updaters (greedy mode: --greedy)? (y/N)${NC}"
+                read -r response < /dev/tty
+                if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+                    GREEDY_FLAG="--greedy"
+                fi
+            fi
+            run_brew upgrade --cask $GREEDY_FLAG
             echo -e "${GREEN}Homebrew cask upgrade complete.${NC}"
         fi
     fi
@@ -372,7 +380,10 @@ fi
 # MacPorts Cleanup
 if [[ " ${PACKAGE_MANAGERS[*]} " =~ " port " ]]; then
     echo -e "${BLUE}Cleaning up MacPorts...${NC}"
-    $SUDO port uninstall inactive
+    $SUDO port uninstall inactive 2>/dev/null || true
+    if [ -t 1 ]; then
+        $SUDO port reclaim 2>/dev/null || true
+    fi
     echo -e "${GREEN}Done!${NC}"
 fi
 
@@ -387,6 +398,40 @@ if [[ " ${PACKAGE_MANAGERS[*]} " =~ " port " ]]; then
     echo -e "${BLUE}Clearing MacPorts cache...${NC}"
     $SUDO port clean --all all
     echo -e "${GREEN}Done!${NC}"
+fi
+
+# Xcode Developer Cache Cleanup
+USER_HOME="${HOME}"
+if [ "$EUID" -eq 0 ] && [ -n "$SUDO_USER" ]; then
+    USER_HOME=$(eval echo "~$SUDO_USER")
+fi
+if [ -d "$USER_HOME/Library/Developer/Xcode/DerivedData" ] || command -v xcrun &> /dev/null; then
+    RESPONSE_IS_YES=false
+    if [ -t 1 ]; then
+        echo -e "${YELLOW}Clean Xcode DerivedData & unavailable iOS Simulators? (y/N)${NC}"
+        read -r response < /dev/tty
+        if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+            RESPONSE_IS_YES=true
+        fi
+    fi
+    if [ "$RESPONSE_IS_YES" = true ]; then
+        if [ -d "$USER_HOME/Library/Developer/Xcode/DerivedData" ]; then
+            echo -e "${BLUE}Clearing Xcode DerivedData...${NC}"
+            rm -rf "$USER_HOME/Library/Developer/Xcode/DerivedData"/* 2>/dev/null || true
+        fi
+        if command -v xcrun &> /dev/null; then
+            echo -e "${BLUE}Deleting unavailable iOS simulators...${NC}"
+            xcrun simctl delete unavailable 2>/dev/null || true
+        fi
+        echo -e "${GREEN}Developer caches cleaned.${NC}"
+    fi
+fi
+
+# Time Machine Snapshot Thinning if free disk space is low (<20GB)
+FREE_SPACE_GB=$(df -g / 2>/dev/null | tail -1 | awk '{print $4}')
+if [ -n "$FREE_SPACE_GB" ] && [ "$FREE_SPACE_GB" -lt 20 ] 2>/dev/null; then
+    echo -e "${YELLOW}Low disk space detected (<20GB). Thinning local Time Machine snapshots...${NC}"
+    $SUDO tmutil thinLocalSnapshots / 10000000000 4 2>/dev/null || true
 fi
 
 

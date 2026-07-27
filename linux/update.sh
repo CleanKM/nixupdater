@@ -37,7 +37,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.9.0"
+SCRIPT_VERSION="1.10.0"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
@@ -361,6 +361,18 @@ esac
 ) & 
 spinner $!
 echo -e "${GREEN}Done!${NC}"
+
+# Security Advisory Audit Check
+if command -v dnf5 &> /dev/null; then
+    SEC_INFO=$($SUDO dnf5 advisory summary 2>/dev/null | grep -iE 'security|critical|important' || true)
+    [ -n "$SEC_INFO" ] && echo -e "${YELLOW}Security Advisories (DNF5):${NC}\n${CYAN}$SEC_INFO${NC}\n"
+elif command -v dnf &> /dev/null; then
+    SEC_INFO=$($SUDO dnf updateinfo summary 2>/dev/null | grep -iE 'security|critical|important' || true)
+    [ -n "$SEC_INFO" ] && echo -e "${YELLOW}Security Advisories (DNF):${NC}\n${CYAN}$SEC_INFO${NC}\n"
+elif command -v arch-audit &> /dev/null; then
+    SEC_INFO=$(arch-audit 2>/dev/null || true)
+    [ -n "$SEC_INFO" ] && echo -e "${YELLOW}Vulnerabilities Detected (arch-audit):${NC}\n${RED}$SEC_INFO${NC}\n"
+fi
 
 SYSTEM_UPDATES=$(
 case "$PACKAGE_MANAGER" in
@@ -764,10 +776,41 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
         run_brew cleanup
         echo -e "${GREEN}Homebrew upgrade complete.${NC}"
     fi
+
+    # Developer Package Managers Upgrade (pipx, cargo, npm)
+    if command -v pipx &> /dev/null; then
+        echo -e "${BLUE}Upgrading pipx packages...${NC}"
+        run_as_user pipx upgrade-all 2>/dev/null || true
+        echo -e "${GREEN}pipx upgrade complete.${NC}"
+    fi
+
+    if command -v cargo &> /dev/null && cargo install-update --help &> /dev/null; then
+        echo -e "${BLUE}Upgrading Cargo packages...${NC}"
+        run_as_user cargo install-update -a 2>/dev/null || true
+        echo -e "${GREEN}Cargo upgrade complete.${NC}"
+    fi
+
+    if command -v npm &> /dev/null; then
+        echo -e "${BLUE}Upgrading global npm packages...${NC}"
+        $SUDO npm update -g 2>/dev/null || true
+        echo -e "${GREEN}npm global upgrade complete.${NC}"
+    fi
 fi
 
 echo ""
-echo -e "${MAGENTA}--- Reboot Check ---${NC}"
+echo -e "${MAGENTA}--- Reboot & Service Restart Check ---${NC}"
+# Service Restart Audit (Services running outdated in-memory libraries)
+if command -v dnf5 &> /dev/null; then
+    SERVICES_TO_RESTART=$($SUDO dnf5 needs-restarting -s 2>/dev/null || true)
+    [ -n "$SERVICES_TO_RESTART" ] && echo -e "${YELLOW}Services running outdated libraries (consider restarting):${NC}\n${CYAN}$SERVICES_TO_RESTART${NC}"
+elif command -v dnf &> /dev/null && command -v needs-restarting &> /dev/null; then
+    SERVICES_TO_RESTART=$($SUDO dnf needs-restarting -s 2>/dev/null || true)
+    [ -n "$SERVICES_TO_RESTART" ] && echo -e "${YELLOW}Services running outdated libraries (consider restarting):${NC}\n${CYAN}$SERVICES_TO_RESTART${NC}"
+elif command -v needrestart &> /dev/null; then
+    echo -e "${BLUE}Auditing running services with needrestart...${NC}"
+    $SUDO needrestart -b 2>/dev/null || true
+fi
+
 REBOOT_NEEDED=false
 case "$PACKAGE_MANAGER" in
     "apt")
@@ -958,6 +1001,20 @@ if command -v snap &> /dev/null; then
     fi
 fi
 echo -e "${GREEN}Done!${NC}"
+
+echo ""
+echo -e "${MAGENTA}--- Systemd Service Status Audit ---${NC}"
+if command -v systemctl &> /dev/null; then
+    FAILED_UNITS=$(systemctl --failed --no-legend --plain 2>/dev/null || true)
+    if [ -n "$FAILED_UNITS" ]; then
+        echo -e "${RED}Warning: The following systemd units are in a failed state:${NC}"
+        echo -e "${RED}$FAILED_UNITS${NC}"
+    else
+        echo -e "${GREEN}All systemd services are running normally.${NC}"
+    fi
+else
+    echo -e "${YELLOW}systemctl not found. Skipping systemd service audit.${NC}"
+fi
 
 echo ""
 echo -e "${MAGENTA}--- Distribution Upgrade Check ---${NC}"

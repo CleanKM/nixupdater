@@ -18,8 +18,11 @@ This script is a robust update tool for Linux distributions. It intelligently de
 **Key Features:**
 
 *   **Cross-Distribution Support:** Automatically identifies the Linux distribution (including Debian, Ubuntu, Arch, Alpine, Fedora, openSUSE Tumbleweed/Leap, openSUSE MicroOS, NixOS, and atomic OSTree systems like Fedora Silverblue) and utilizes the appropriate package manager (`apt-get`, `dnf5`, `dnf`, `pacman`, `apk`, `zypper`, `rpm-ostree`, `bootc`, `transactional-update`, or `nixos-rebuild`).
+*   **Developer Environment Package Updates:** Automatically detects and upgrades packages for developer tools including `pipx` (`pipx upgrade-all`), Rust Cargo (`cargo install-update -a`), and global `npm` (`npm update -g`).
 *   **Arch AUR Helper Integration:** Automatically detects and uses Arch User Repository (AUR) helpers (`yay` or `paru`) when available to keep both official packages and AUR packages up to date seamlessly.
 *   **NixOS Flakes & Store Optimization:** Supports modern NixOS Flake setups (`/etc/nixos/flake.nix`) alongside classic channels, and automatically runs `nix-store --optimise` after garbage collection to deduplicate store binaries.
+*   **Security Advisory & Vulnerability Audits:** Queries pending security advisories before upgrading on Fedora/RHEL (`dnf5 advisory` / `dnf updateinfo`) and audits known CVEs on Arch Linux via `arch-audit`.
+*   **Systemd Failed Units & Service Restart Audit:** Audits running systemd services post-update (`systemctl --failed`) to alert users if any daemon crashed, and identifies services running outdated in-memory libraries (`dnf needs-restarting -s` / `needrestart`).
 *   **Headless Debconf & Needrestart Safeguards:** Exports non-interactive flags (`DEBIAN_FRONTEND=noninteractive`, `NEEDRESTART_MODE=a`) for Debian/Ubuntu systems to prevent interactive service restart prompts from stalling execution.
 *   **Enhanced Maintenance & Disk Space Recovery:** Performs unused Flatpak runtime cleanups (`flatpak uninstall --unused`), purges disabled Snap revisions to reclaim disk space, and uses `paccache` for conservative Arch Linux cache retention.
 *   **Enhanced Sudo Privilege Check & Helper:** Intelligently checks for sudo/root privileges using POSIX `id -Gn`, offering to relaunch with sudo if the user is in the sudo/wheel group.
@@ -74,16 +77,18 @@ This script is designed to keep your macOS system and its installed software up-
 **Key Features:**
 
 *   **macOS System Updates:** Checks for available macOS operating system updates. It prevents automatic installation of major OS upgrades and allows for individual confirmation of each recommended update.
-*   **Homebrew Integration:** Manages updates for Homebrew formulae and casks, running them elevated safely under the original user session.
+*   **Homebrew Integration & Cask Greedy Mode:** Manages updates for Homebrew formulae and casks, offering an optional `--greedy` mode prompt to update casks with built-in auto-updaters (e.g., Chrome, Discord, VS Code).
 *   **App Store Integration:** Checks for and installs updates for Mac App Store applications using `mas-cli` (will prompt to install if missing).
-*   **MacPorts Integration:** Manages updates for MacPorts packages.
+*   **MacPorts Integration & Reclaim:** Manages updates for MacPorts packages and runs `port reclaim` to free up space from unused dependencies and build files.
+*   **Developer Caches & Simulator Maintenance:** Offers interactive cleanup of Xcode `DerivedData` (`~/Library/Developer/Xcode/DerivedData`) and removes unavailable iOS simulators via `xcrun simctl delete unavailable`.
+*   **Time Machine Snapshot Thinning:** Automatically thins local Time Machine APFS snapshots (`tmutil thinLocalSnapshots`) when low disk space (<20GB) is detected.
 *   **Sudo-Safe Privilege Demotion Wrappers:** Automatically demotes Homebrew and App Store CLI (`mas`) actions back to the original non-root user (`$SUDO_USER`) when the script runs elevated under `sudo`, preventing permission errors and session profile locks.
 *   **System Maintenance:** Cleans up Homebrew and MacPorts caches and removes inactive packages.
-*   **Log Cleanup:** Clears old log files from common macOS log directories.
-*   **Open Ports:** Lists currently open TCP and UDP ports on the system using `lsof` or `netstat`, utilizing advanced filtering to list both listening TCP sockets and open UDP ports accurately.
+*   **Log Cleanup:** Clears old log files from common macOS log directories (evaluating `$SUDO_USER` home directory properly when elevated).
+*   **Open Ports:** Lists currently open TCP and UDP ports on the system using `lsof` or `netstat`, utilizing advanced filtering to list both listening TCP sockets and open UDP ports accurately while preserving table column headers.
 *   **Reboot Check:** Intelligently parses system update output to accurately notify you if a restart is required after installing macOS system updates.
 *   **Robust Non-Interactive Execution:** Safe integration with headless and pipelined scenarios across all prompts (including self-update confirmations and system update confirmations).
-*   **Automatic Self-Update:** The script can check for and offer to install its own latest version from the GitHub repository. Built with instant CDN cache-busting logic, graceful offline network fallbacks, and single-pass relaunch optimization to prevent redundant network checks during process handoffs and sudo elevations.
+*   **Automatic Self-Update:** The script can check for and offer to install its own latest version from the GitHub repository. Built with instant CDN cache-busting logic, graceful offline network fallbacks, single-pass `softwareupdate -l` optimization, and single-pass relaunch optimization.
 *   **Version Display:** Shows the script's current version at startup.
 *   **Simple Banner:** Displays a clean, informative banner instead of ASCII art.
 
