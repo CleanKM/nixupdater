@@ -32,7 +32,7 @@ This script is a robust update tool for Linux distributions. It intelligently de
 *   **Log Cleanup:** Clears old system logs to free up space.
 *   **Open Ports:** Lists currently open TCP and UDP ports on the system using `lsof`, `ss`, or `netstat` as fallbacks, utilizing advanced filtering to show both listening TCP sockets and open UDP ports accurately.
 *   **Docker Integration:** Stops Docker containers before system upgrades if Docker-related packages (checked across system packages, snaps, and Homebrew) are being updated, and restarts them afterward.
-*   **Dependency Handling:** Safely prompts for user consent before attempting to install `lsof` to list open ports, falling back seamlessly to `ss` or `netstat` if declined or running headless.
+*   **Dependency Handling:** Safely prompts for user consent before attempting to install `lsof` to list open ports, falling back seamlessly to `ss` or `netstat` if declined, running headless, or running on an immutable OS (e.g., Fedora Silverblue, MicroOS).
 *   **Advanced Docker & Compose Integration:** Categorizes running containers into Standalone and Compose projects at startup. If Docker-related updates are required, it provides an interactive selection menu to choose exactly which containers to safely spin down. Post-update, it supplies an ordered-restart menu so you can boot interdependent Compose networks and standalone databases in a precise operational sequence. Validates states specifically for targeted containers.
 
 **Usage:**
@@ -77,7 +77,7 @@ This script is designed to keep your macOS system and its installed software up-
 *   **System Maintenance:** Cleans up Homebrew and MacPorts caches and removes inactive packages.
 *   **Log Cleanup:** Clears old log files from common macOS log directories.
 *   **Open Ports:** Lists currently open TCP and UDP ports on the system using `lsof` or `netstat`, utilizing advanced filtering to list both listening TCP sockets and open UDP ports accurately.
-*   **Reboot Check:** Notifies you if a restart is required after installing macOS system updates.
+*   **Reboot Check:** Intelligently parses system update output to accurately notify you if a restart is required after installing macOS system updates.
 *   **Robust Non-Interactive Execution:** Safe integration with headless and pipelined scenarios across all prompts (including self-update confirmations and system update confirmations).
 *   **Automatic Self-Update:** The script can check for and offer to install its own latest version from the GitHub repository. Built with instant CDN cache-busting logic, graceful offline network fallbacks, and single-pass relaunch optimization to prevent redundant network checks during process handoffs and sudo elevations.
 *   **Version Display:** Shows the script's current version at startup.

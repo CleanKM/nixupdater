@@ -41,7 +41,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.4.0"
+SCRIPT_VERSION="1.4.1"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
@@ -306,7 +306,7 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$BREW_UPDATES" ] || [ -n "$BREW_CASK_UPDATE
                 if [ "$RESPONSE_IS_YES" = true ]; then
                     echo -e "${BLUE}Installing update: '$label'...${NC}"
                     $SUDO softwareupdate -i "$label"
-                    if echo "$line" | grep -q -i "restart"; then
+                    if echo "$SYSTEM_UPDATES" | grep -A 2 -F "$line" | grep -q -i "restart"; then
                         REBOOT_NEEDED_AFTER_UPDATE=true
                     fi
                     echo -e "${GREEN}Update '$label' complete.${NC}"
@@ -314,6 +314,7 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$BREW_UPDATES" ] || [ -n "$BREW_CASK_UPDATE
                     echo -e "${YELLOW}Skipping update: '$label'.${NC}"
                 fi
             fi
+        done
         echo -e "${GREEN}All macOS updates processed.${NC}"
     fi
 

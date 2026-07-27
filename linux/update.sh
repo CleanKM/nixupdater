@@ -32,7 +32,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.8.7"
+SCRIPT_VERSION="1.8.8"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
@@ -314,25 +314,25 @@ echo -e "${GREEN}Done!${NC}"
 
 SYSTEM_UPDATES=$(
 case "$PACKAGE_MANAGER" in
-    "apt")
+    ("apt")
         apt list --upgradable 2>/dev/null | tail -n +2
         ;;
-    "dnf")
+    ("dnf")
         dnf check-update | tail -n +2
         ;;
-    "pacman")
+    ("pacman")
         pacman -Qu
         ;;
-    "apk")
+    ("apk")
         apk list --upgradeable 2>/dev/null | tail -n +1 # apk list --upgradeable includes a header
         ;;
-    "rpm-ostree")
+    ("rpm-ostree")
         rpm-ostree status -v | grep -q -E "AvailableUpdate: yes|Staged: yes" && echo "OSTree updates are available (pending deployment)."
         ;;
-    "transactional-update")
+    ("transactional-update")
         echo "Transactional updates will be checked during the upgrade phase."
         ;;
-    "nixos")
+    ("nixos")
         echo "NixOS channel/flake updates will be evaluated during the upgrade phase."
         ;;
 esac
@@ -977,6 +977,9 @@ if ! command -v lsof &> /dev/null; then
                 ;;
             "apk")
                 $SUDO apk add lsof
+                ;;
+            *)
+                echo -e "${YELLOW}Automatic installation of 'lsof' is not supported for $PACKAGE_MANAGER.${NC}"
                 ;;
         esac
         # Verify lsof installation
