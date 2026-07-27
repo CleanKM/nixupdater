@@ -41,7 +41,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.5.0"
+SCRIPT_VERSION="1.6.0"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
@@ -432,6 +432,27 @@ FREE_SPACE_GB=$(df -g / 2>/dev/null | tail -1 | awk '{print $4}')
 if [ -n "$FREE_SPACE_GB" ] && [ "$FREE_SPACE_GB" -lt 20 ] 2>/dev/null; then
     echo -e "${YELLOW}Low disk space detected (<20GB). Thinning local Time Machine snapshots...${NC}"
     $SUDO tmutil thinLocalSnapshots / 10000000000 4 2>/dev/null || true
+fi
+
+# Native BSD Periodic Maintenance
+echo -e "${BLUE}Running macOS native periodic maintenance (daily, weekly, monthly)...${NC}"
+$SUDO periodic daily weekly monthly 2>/dev/null || true
+
+# Flush DNS Resolver Cache
+echo -e "${BLUE}Flushing DNS resolver cache...${NC}"
+$SUDO dscacheutil -flushcache 2>/dev/null || true
+$SUDO killall -HUP mDNSResponder 2>/dev/null || true
+echo -e "${GREEN}System maintenance complete.${NC}"
+
+echo ""
+echo -e "${MAGENTA}--- LaunchAgent & LaunchDaemon Audit ---${NC}"
+echo -e "${BLUE}Checking for broken plist symlinks...${NC}"
+BROKEN_LAUNCH_LINKS=$(find "$USER_HOME/Library/LaunchAgents" /Library/LaunchAgents /Library/LaunchDaemons -type l ! -exec test -e {} \; -print 2>/dev/null || true)
+if [ -n "$BROKEN_LAUNCH_LINKS" ]; then
+    echo -e "${YELLOW}Warning: Found broken launch agent/daemon symlinks:${NC}"
+    echo -e "${CYAN}$BROKEN_LAUNCH_LINKS${NC}"
+else
+    echo -e "${GREEN}No broken launch symlinks found.${NC}"
 fi
 
 

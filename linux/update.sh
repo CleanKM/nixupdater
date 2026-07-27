@@ -37,7 +37,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.10.0"
+SCRIPT_VERSION="1.11.0"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
@@ -261,6 +261,21 @@ else
         "opensuse"* | "suse" | "tumbleweed" | "leap")
             PACKAGE_MANAGER="zypper"
             ;;
+        "void")
+            PACKAGE_MANAGER="xbps"
+            ;;
+        "gentoo")
+            PACKAGE_MANAGER="emerge"
+            ;;
+        "solus")
+            PACKAGE_MANAGER="eopkg"
+            ;;
+        "clear-linux-os")
+            PACKAGE_MANAGER="swupd"
+            ;;
+        "guix")
+            PACKAGE_MANAGER="guix"
+            ;;
         *)
             if echo "$ID_LIKE" | grep -qE '\b(ubuntu|debian)\b'; then
                 PACKAGE_MANAGER="apt"
@@ -272,6 +287,10 @@ else
                 PACKAGE_MANAGER="apk"
             elif echo "$ID_LIKE" | grep -qE '\b(suse|opensuse)\b'; then
                 PACKAGE_MANAGER="zypper"
+            elif echo "$ID_LIKE" | grep -qE '\b(void)\b'; then
+                PACKAGE_MANAGER="xbps"
+            elif echo "$ID_LIKE" | grep -qE '\b(gentoo)\b'; then
+                PACKAGE_MANAGER="emerge"
             elif command -v apt &> /dev/null; then
                 PACKAGE_MANAGER="apt"
                 echo -e "${GREEN}Found 'apt'. Proceeding.${NC}"
@@ -290,6 +309,21 @@ else
             elif command -v zypper &> /dev/null; then
                 PACKAGE_MANAGER="zypper"
                 echo -e "${GREEN}Found 'zypper'. Proceeding.${NC}"
+            elif command -v xbps-install &> /dev/null; then
+                PACKAGE_MANAGER="xbps"
+                echo -e "${GREEN}Found 'xbps'. Proceeding.${NC}"
+            elif command -v emerge &> /dev/null; then
+                PACKAGE_MANAGER="emerge"
+                echo -e "${GREEN}Found 'emerge'. Proceeding.${NC}"
+            elif command -v eopkg &> /dev/null; then
+                PACKAGE_MANAGER="eopkg"
+                echo -e "${GREEN}Found 'eopkg'. Proceeding.${NC}"
+            elif command -v swupd &> /dev/null; then
+                PACKAGE_MANAGER="swupd"
+                echo -e "${GREEN}Found 'swupd'. Proceeding.${NC}"
+            elif command -v guix &> /dev/null; then
+                PACKAGE_MANAGER="guix"
+                echo -e "${GREEN}Found 'guix'. Proceeding.${NC}"
             else
                 echo -e "${RED}Could not find a supported package manager. Exiting.${NC}"
                 exit 1
@@ -352,6 +386,21 @@ case "$PACKAGE_MANAGER" in
     "zypper")
         $SUDO zypper refresh >/dev/null 2>&1
         ;;
+    "xbps")
+        $SUDO xbps-install -S >/dev/null 2>&1
+        ;;
+    "emerge")
+        $SUDO emerge --sync >/dev/null 2>&1
+        ;;
+    "eopkg")
+        $SUDO eopkg update-repo >/dev/null 2>&1
+        ;;
+    "swupd")
+        $SUDO swupd check-update >/dev/null 2>&1
+        ;;
+    "guix")
+        guix pull --check >/dev/null 2>&1 || true
+        ;;
     "rpm-ostree")
         rpm-ostree upgrade --check >/dev/null 2>&1
         ;;
@@ -397,6 +446,21 @@ case "$PACKAGE_MANAGER" in
         ;;
     ("zypper")
         zypper list-updates 2>/dev/null | grep -E '^v \|'
+        ;;
+    ("xbps")
+        xbps-install -un 2>/dev/null
+        ;;
+    ("emerge")
+        emerge -pv --update --deep --newuse @world 2>/dev/null
+        ;;
+    ("eopkg")
+        eopkg check-update 2>/dev/null
+        ;;
+    ("swupd")
+        swupd check-update 2>/dev/null
+        ;;
+    ("guix")
+        echo "Guix packages will be upgraded during the upgrade phase."
         ;;
     ("rpm-ostree")
         rpm-ostree status -v | grep -q -E "AvailableUpdate: yes|Staged: yes" && echo "OSTree updates are available (pending deployment)."
@@ -632,6 +696,21 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
                 else
                     $SUDO zypper --non-interactive up
                 fi
+                ;;
+            "xbps")
+                $SUDO xbps-install -Syu
+                ;;
+            "emerge")
+                $SUDO emerge -uDNv @world
+                ;;
+            "eopkg")
+                $SUDO eopkg upgrade -y
+                ;;
+            "swupd")
+                $SUDO swupd update
+                ;;
+            "guix")
+                guix pull && guix package -u
                 ;;
             "rpm-ostree")
                 if command -v bootc &> /dev/null && ! grep -q -E -e "LockLayering=false" /etc/rpm-ostreed.conf 2>/dev/null; then
@@ -938,6 +1017,23 @@ case "$PACKAGE_MANAGER" in
     "zypper")
         echo "zypper manages dependencies automatically during upgrades."
         ;;
+    "xbps")
+        $SUDO xbps-remove -Oo 2>/dev/null || true
+        $SUDO vkpurge rm all 2>/dev/null || true
+        ;;
+    "emerge")
+        $SUDO emerge --depclean 2>/dev/null || true
+        $SUDO eclean-dist 2>/dev/null || true
+        ;;
+    "eopkg")
+        $SUDO eopkg rmo 2>/dev/null || true
+        ;;
+    "swupd")
+        $SUDO swupd clean 2>/dev/null || true
+        ;;
+    "guix")
+        guix gc 2>/dev/null || true
+        ;;
     "rpm-ostree")
         echo "rpm-ostree images are managed atomically. No autoremove required."
         ;;
@@ -1082,15 +1178,33 @@ case "$PACKAGE_MANAGER" in
 esac
 
 echo ""
-echo -e "${MAGENTA}--- Clearing Old Logs ---${NC}"
+echo -e "${MAGENTA}--- Storage Health Check ---${NC}"
+if command -v zpool &> /dev/null; then
+    echo -e "${BLUE}Checking ZFS pool health...${NC}"
+    ZPOOL_HEALTH=$(zpool status -x 2>/dev/null || true)
+    echo -e "${CYAN}$ZPOOL_HEALTH${NC}"
+fi
+if command -v btrfs &> /dev/null; then
+    echo -e "${BLUE}Checking Btrfs filesystem status...${NC}"
+    btrfs device stats / 2>/dev/null || true
+fi
+
+echo ""
+echo -e "${MAGENTA}--- Clearing Old Logs & Coredumps ---${NC}"
 if command -v journalctl &> /dev/null; then
-    echo -e "${BLUE}Using journalctl to clear logs older than 10 days...${NC}"
-    $SUDO journalctl --vacuum-time=10d 2>/dev/null || true
+    echo -e "${BLUE}Using journalctl to clear logs older than 10 days or exceeding 500MB...${NC}"
+    $SUDO journalctl --vacuum-time=10d --vacuum-size=500M 2>/dev/null || true
 else
     echo -e "${YELLOW}Warning: 'journalctl' not found. Using 'find' to clear logs from /var/log.${NC}"
     echo -e "${BLUE}Clearing .log and .gz files older than 10 days from /var/log...${NC}"
     $SUDO find /var/log -type f -name "*.log" -mtime +10 -delete
     $SUDO find /var/log -type f -name "*.gz" -mtime +10 -delete
+fi
+
+# Clean coredumps & crash reports
+if [ -d /var/crash ] || [ -d /var/lib/systemd/coredump ]; then
+    echo -e "${BLUE}Clearing crash dumps older than 10 days...${NC}"
+    $SUDO find /var/crash /var/lib/systemd/coredump -type f -mtime +10 -delete 2>/dev/null || true
 fi
 echo -e "${GREEN}Old logs cleared.${NC}"
 

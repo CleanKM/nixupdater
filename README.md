@@ -17,14 +17,15 @@ This script is a robust update tool for Linux distributions. It intelligently de
 
 **Key Features:**
 
-*   **Cross-Distribution Support:** Automatically identifies the Linux distribution (including Debian, Ubuntu, Arch, Alpine, Fedora, openSUSE Tumbleweed/Leap, openSUSE MicroOS, NixOS, and atomic OSTree systems like Fedora Silverblue) and utilizes the appropriate package manager (`apt-get`, `dnf5`, `dnf`, `pacman`, `apk`, `zypper`, `rpm-ostree`, `bootc`, `transactional-update`, or `nixos-rebuild`).
+*   **Cross-Distribution Support:** Automatically identifies the Linux distribution (including Debian, Ubuntu, Arch, Alpine, Fedora, openSUSE Tumbleweed/Leap, openSUSE MicroOS, Void Linux, Gentoo, Solus, Clear Linux, GNU Guix, NixOS, and atomic OSTree systems like Fedora Silverblue) and utilizes the appropriate package manager (`apt-get`, `dnf5`, `dnf`, `pacman`, `apk`, `zypper`, `xbps`, `emerge`, `eopkg`, `swupd`, `guix`, `rpm-ostree`, `bootc`, `transactional-update`, or `nixos-rebuild`).
+*   **Storage Health Checks:** Checks ZFS pool status (`zpool status`) and queries Btrfs filesystem statistics (`btrfs device stats`) to alert users to storage pool degradation or device errors.
+*   **Enhanced Maintenance & Coredump Purging:** Vacuum-cleans systemd journals by both time and size (`--vacuum-time=10d --vacuum-size=500M`) and purges stale crash reports and coredumps from `/var/crash` and `/var/lib/systemd/coredump`.
 *   **Developer Environment Package Updates:** Automatically detects and upgrades packages for developer tools including `pipx` (`pipx upgrade-all`), Rust Cargo (`cargo install-update -a`), and global `npm` (`npm update -g`).
 *   **Arch AUR Helper Integration:** Automatically detects and uses Arch User Repository (AUR) helpers (`yay` or `paru`) when available to keep both official packages and AUR packages up to date seamlessly.
 *   **NixOS Flakes & Store Optimization:** Supports modern NixOS Flake setups (`/etc/nixos/flake.nix`) alongside classic channels, and automatically runs `nix-store --optimise` after garbage collection to deduplicate store binaries.
 *   **Security Advisory & Vulnerability Audits:** Queries pending security advisories before upgrading on Fedora/RHEL (`dnf5 advisory` / `dnf updateinfo`) and audits known CVEs on Arch Linux via `arch-audit`.
 *   **Systemd Failed Units & Service Restart Audit:** Audits running systemd services post-update (`systemctl --failed`) to alert users if any daemon crashed, and identifies services running outdated in-memory libraries (`dnf needs-restarting -s` / `needrestart`).
 *   **Headless Debconf & Needrestart Safeguards:** Exports non-interactive flags (`DEBIAN_FRONTEND=noninteractive`, `NEEDRESTART_MODE=a`) for Debian/Ubuntu systems to prevent interactive service restart prompts from stalling execution.
-*   **Enhanced Maintenance & Disk Space Recovery:** Performs unused Flatpak runtime cleanups (`flatpak uninstall --unused`), purges disabled Snap revisions to reclaim disk space, and uses `paccache` for conservative Arch Linux cache retention.
 *   **Enhanced Sudo Privilege Check & Helper:** Intelligently checks for sudo/root privileges using POSIX `id -Gn`, offering to relaunch with sudo if the user is in the sudo/wheel group.
 *   **Version Display:** Shows the script's current version at startup.
 *   **Simple Banner:** Displays a clean, informative banner instead of ASCII art.
@@ -77,6 +78,9 @@ This script is designed to keep your macOS system and its installed software up-
 **Key Features:**
 
 *   **macOS System Updates:** Checks for available macOS operating system updates. It prevents automatic installation of major OS upgrades and allows for individual confirmation of each recommended update.
+*   **Native BSD Periodic Maintenance:** Executes macOS's built-in BSD maintenance tasks (`sudo periodic daily weekly monthly`) to rotate system logs and update system databases.
+*   **DNS Resolver Cache Flushing:** Flushes the macOS DNS resolver cache (`dscacheutil`, `mDNSResponder`) during maintenance.
+*   **LaunchAgent & LaunchDaemon Symlink Auditor:** Audits `~/Library/LaunchAgents`, `/Library/LaunchAgents`, and `/Library/LaunchDaemons` for broken plist symlinks pointing to non-existent binaries.
 *   **Homebrew Integration & Cask Greedy Mode:** Manages updates for Homebrew formulae and casks, offering an optional `--greedy` mode prompt to update casks with built-in auto-updaters (e.g., Chrome, Discord, VS Code).
 *   **App Store Integration:** Checks for and installs updates for Mac App Store applications using `mas-cli` (will prompt to install if missing).
 *   **MacPorts Integration & Reclaim:** Manages updates for MacPorts packages and runs `port reclaim` to free up space from unused dependencies and build files.
