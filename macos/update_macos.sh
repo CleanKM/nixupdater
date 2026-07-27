@@ -41,7 +41,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.3.9"
+SCRIPT_VERSION="1.4.0"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
@@ -188,9 +188,18 @@ if command -v mas &> /dev/null; then
 else
     echo -e "${YELLOW}Mac App Store CLI 'mas' not found.${NC}"
     if [[ " ${PACKAGE_MANAGERS[*]} " =~ " brew " ]]; then
-        echo -e "${YELLOW}Do you want to install 'mas' using Homebrew to manage App Store apps? (y/n)${NC}"
-        read -r response < /dev/tty
-        if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+        RESPONSE_IS_YES=false
+        if [ -t 1 ]; then
+            echo -e "${YELLOW}Do you want to install 'mas' using Homebrew to manage App Store apps? (y/n)${NC}"
+            read -r response < /dev/tty
+            if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+                RESPONSE_IS_YES=true
+            fi
+        else
+            echo -e "${YELLOW}Non-interactive mode detected. Skipping 'mas' installation.${NC}"
+        fi
+
+        if [ "$RESPONSE_IS_YES" = true ]; then
             echo -e "${BLUE}Installing 'mas'...${NC}"
             run_brew install mas
             if command -v mas &> /dev/null; then
@@ -281,7 +290,7 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$BREW_UPDATES" ] || [ -n "$BREW_CASK_UPDATE
     # System Upgrade
     if [ -n "$SYSTEM_UPDATES" ]; then
         echo "$SYSTEM_UPDATES" | while IFS= read -r line; do
-            label=$(echo "$line" | sed -nE 's/^[[:space:]]*\*[[:space:]]*(.+)[[:space:]]+\([^)]+\)[[:space:]]+-.+/\1/p')
+            label=$(echo "$line" | sed -nE 's/^[[:space:]]*\*[[:space:]]*(Label:[[:space:]]*)?([^,]+).*/\2/p' | xargs)
             if [ -n "$label" ]; then
                 RESPONSE_IS_YES=false
                 if [ -t 1 ]; then
@@ -305,7 +314,6 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$BREW_UPDATES" ] || [ -n "$BREW_CASK_UPDATE
                     echo -e "${YELLOW}Skipping update: '$label'.${NC}"
                 fi
             fi
-        done
         echo -e "${GREEN}All macOS updates processed.${NC}"
     fi
 

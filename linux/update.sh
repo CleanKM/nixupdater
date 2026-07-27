@@ -32,7 +32,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.8.6"
+SCRIPT_VERSION="1.8.7"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
@@ -912,7 +912,7 @@ echo ""
 echo -e "${MAGENTA}--- Clearing Old Logs ---${NC}"
 if command -v journalctl &> /dev/null; then
     echo -e "${BLUE}Using journalctl to clear logs older than 10 days...${NC}"
-    $SUDO journalctl --vacuum-time=10d
+    $SUDO journalctl --vacuum-time=10d 2>/dev/null || true
 else
     echo -e "${YELLOW}Warning: 'journalctl' not found. Using 'find' to clear logs from /var/log.${NC}"
     echo -e "${BLUE}Clearing .log and .gz files older than 10 days from /var/log...${NC}"
@@ -922,7 +922,7 @@ fi
 echo -e "${GREEN}Old logs cleared.${NC}"
 
 echo ""
-echo -e "${MAGENTA}--- Firmware Update Check ---""${NC}"
+echo -e "${MAGENTA}--- Firmware Update Check ---${NC}"
 if command -v fwupdmgr &> /dev/null; then
     echo -n -e "${BLUE}Refreshing firmware metadata...${NC}"
     ($SUDO fwupdmgr refresh --force) >/dev/null 2>&1 &
