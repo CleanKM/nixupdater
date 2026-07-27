@@ -41,7 +41,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.4.1"
+SCRIPT_VERSION="1.4.2"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
@@ -55,7 +55,7 @@ for arg in "$@"; do
     fi
 done
 
-SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")" # Get absolute path of the current script
+SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")" # Get absolute path of the current script
 
 if [ "$SKIP_SELF_UPDATE" = true ]; then
     if [ "$NIXUPDATER_SKIP_CHECK" != "true" ]; then
@@ -129,6 +129,8 @@ if [ "$EUID" -ne 0 ]; then
     echo -e "${GREEN}Sudo privileges obtained.${NC}"
     # Keep-alive: update existing sudo time stamp if set, otherwise do nothing.
     while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
+    SUDO_KEEP_ALIVE_PID=$!
+    trap 'kill $SUDO_KEEP_ALIVE_PID 2>/dev/null' EXIT
 fi
 
 # --- Script Banner ---
@@ -140,6 +142,10 @@ echo ""
 # --- Spinner ---
 spinner() {
     local pid=$1
+    if [ ! -t 1 ]; then
+        wait "$pid"
+        return
+    fi
     local delay=0.1
     local spinstr='|/-\'
     while ps -p "$pid" > /dev/null; do
@@ -217,13 +223,15 @@ echo ""
 
 # --- Update Checking ---
 echo -n -e "${BLUE}Checking for macOS updates...${NC}"
-(
-    $SUDO softwareupdate -l >/dev/null 2>&1
-) &
-spinner $!
+RAW_SYS_UPDATES_FILE=$(mktemp)
+( $SUDO softwareupdate -l > "$RAW_SYS_UPDATES_FILE" 2>&1 ) &
+SYS_UPDATES_PID=$!
+spinner $SYS_UPDATES_PID
+wait $SYS_UPDATES_PID
 echo -e "${GREEN}Done!${NC}"
 
-SYSTEM_UPDATES=$($SUDO softwareupdate -l 2>&1 | awk '/Software Update found the following new or updated software:/{found=1; next} found')
+SYSTEM_UPDATES=$(awk '/Software Update found the following new or updated software:/{found=1; next} found' "$RAW_SYS_UPDATES_FILE")
+rm -f "$RAW_SYS_UPDATES_FILE"
 
 BREW_UPDATES=""
 BREW_CASK_UPDATES=""
@@ -386,7 +394,13 @@ echo ""
 echo -e "${MAGENTA}--- Clearing Old Logs ---${NC}"
 echo -e "${BLUE}Clearing .log and .gz files older than 10 days from /var/log and ~/Library/Logs...${NC}"
 $SUDO find /var/log -type f \( -name "*.log" -o -name "*.gz" \) -mtime +10 -delete
-find ~/Library/Logs -type f \( -name "*.log" -o -name "*.gz" \) -mtime +10 -delete
+USER_HOME="${HOME}"
+if [ "$EUID" -eq 0 ] && [ -n "$SUDO_USER" ]; then
+    USER_HOME=$(eval echo "~$SUDO_USER")
+fi
+if [ -d "$USER_HOME/Library/Logs" ]; then
+    find "$USER_HOME/Library/Logs" -type f \( -name "*.log" -o -name "*.gz" \) -mtime +10 -delete
+fi
 echo -e "${GREEN}Old logs cleared.${NC}"
 
 # --- Open Ports on System ---
@@ -396,7 +410,7 @@ echo -e "${MAGENTA}--- Open Ports on System ---${NC}"
 # Check for lsof
 if command -v lsof &> /dev/null; then
     echo -e "${BLUE}Listing listening TCP and UDP ports with lsof...${NC}"
-    $SUDO lsof -i -P -n | grep -E 'LISTEN|UDP'
+    $SUDO lsof -i -P -n | grep -E 'COMMAND|LISTEN|UDP'
 elif command -v netstat &> /dev/null; then
     echo -e "${BLUE}lsof not found. Using 'netstat' to list listening TCP and UDP ports...${NC}"
     $SUDO netstat -anv | grep LISTEN

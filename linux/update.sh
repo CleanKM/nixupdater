@@ -32,7 +32,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.8.8"
+SCRIPT_VERSION="1.8.9"
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
@@ -125,7 +125,7 @@ if [ "$EUID" -ne 0 ]; then
     # Not running as root
     echo -e "${BLUE}This script requires sudo privileges to run.${NC}"
 
-    if groups "$USER" | grep -qE '\b(sudo|wheel)\b'; then
+    if id -Gn "${SUDO_USER:-$USER}" 2>/dev/null | grep -qE '\b(sudo|wheel)\b'; then
         # User is in the sudo group, offer to relaunch
         echo -e "${YELLOW}You are in the 'sudo' group. Do you want to relaunch this script with sudo? (y/n)${NC}"
         RESPONSE_IS_YES=false
@@ -198,6 +198,10 @@ fi
 # --- Spinner ---
 spinner() {
     local pid=$1
+    if [ ! -t 1 ]; then
+        wait "$pid"
+        return
+    fi
     local delay=0.1
     local spinstr='|/-\'
     while ps -p "$pid" > /dev/null; do
@@ -214,13 +218,15 @@ spinner() {
 echo -n -e "${BLUE}Detecting distribution...${NC}"
 if [ -f /etc/os-release ]; then
     . /etc/os-release
-    OS=$NAME
-    DISTRO=$ID
-    echo -e "${GREEN}Done! ($OS)${NC}"
+elif [ -f /usr/lib/os-release ]; then
+    . /usr/lib/os-release
 else
     echo -e "${RED}Cannot detect Linux distribution.${NC}"
     exit 1
 fi
+OS=$NAME
+DISTRO=$ID
+echo -e "${GREEN}Done! ($OS)${NC}"
 
 # --- Package Manager Detection ---
 if [ -f /run/ostree-booted ] && command -v rpm-ostree &> /dev/null; then
@@ -244,8 +250,15 @@ else
             PACKAGE_MANAGER="apk"
             ;;
         *)
-            echo -e "${YELLOW}Unsupported distribution: '$OS'. Attempting to find a compatible package manager...${NC}"
-            if command -v apt &> /dev/null; then
+            if echo "$ID_LIKE" | grep -qE '\b(ubuntu|debian)\b'; then
+                PACKAGE_MANAGER="apt"
+            elif echo "$ID_LIKE" | grep -qE '\b(fedora|rhel|centos)\b'; then
+                PACKAGE_MANAGER="dnf"
+            elif echo "$ID_LIKE" | grep -qE '\b(arch)\b'; then
+                PACKAGE_MANAGER="pacman"
+            elif echo "$ID_LIKE" | grep -qE '\b(alpine)\b'; then
+                PACKAGE_MANAGER="apk"
+            elif command -v apt &> /dev/null; then
                 PACKAGE_MANAGER="apt"
                 echo -e "${GREEN}Found 'apt'. Proceeding.${NC}"
             elif command -v dnf &> /dev/null; then
@@ -1000,7 +1013,7 @@ fi
 # Now, list the ports
 if [ "$LSOF_INSTALL_SUCCESS" = true ]; then
     echo -e "${BLUE}Listing listening TCP and UDP ports with lsof...${NC}"
-    $SUDO lsof -i -P -n | grep -E 'LISTEN|UDP'
+    $SUDO lsof -i -P -n | grep -E 'COMMAND|LISTEN|UDP'
 elif command -v ss &> /dev/null; then
     echo -e "${BLUE}lsof not found. Using 'ss' to list listening TCP and UDP ports...${NC}"
     $SUDO ss -tuln
