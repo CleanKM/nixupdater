@@ -83,15 +83,16 @@ This script is designed to keep your macOS system and its installed software up-
 *   **Homebrew Integration & Cask Greedy Mode:** Manages updates for Homebrew formulae and casks, offering an optional `--greedy` mode prompt to update casks with built-in auto-updaters (e.g., Chrome, Discord, VS Code).
 *   **App Store Integration:** Checks for and installs updates for Mac App Store applications using `mas-cli` (will prompt to install if missing).
 *   **MacPorts Integration & Reclaim:** Manages updates for MacPorts packages and runs `port reclaim` to free up space from unused dependencies and build files.
-*   **Developer Caches & Simulator Maintenance:** Offers interactive cleanup of Xcode `DerivedData` (`~/Library/Developer/Xcode/DerivedData`) and removes unavailable iOS simulators via `xcrun simctl delete unavailable`.
+*   **Developer Caches & Simulator Maintenance:** Offers interactive cleanup of Xcode `DerivedData` (`~/Library/Developer/Xcode/DerivedData`) and removes unavailable iOS simulators via `xcrun simctl delete unavailable`, only when developer tools are actually installed.
 *   **Time Machine Snapshot Thinning:** Automatically thins local Time Machine APFS snapshots (`tmutil thinLocalSnapshots`) when low disk space (<20GB) is detected.
 *   **Sudo-Safe Privilege Demotion Wrappers:** Automatically demotes Homebrew and App Store CLI (`mas`) actions back to the original non-root user (`$SUDO_USER`) when the script runs elevated under `sudo`, preventing permission errors and session profile locks.
-*   **System Maintenance:** Cleans up Homebrew and MacPorts caches and removes inactive packages.
-*   **Log Cleanup:** Clears old log files from common macOS log directories (evaluating `$SUDO_USER` home directory properly when elevated).
+*   **System Maintenance:** Cleans up Homebrew and MacPorts caches (`port clean --all installed`) and removes inactive packages.
+*   **Log Cleanup:** Offers to clear old log files from `/var/log` and `~/Library/Logs` (skipped by default in non-interactive mode), using the `$SUDO_USER` home directory when elevated.
 *   **Open Ports:** Lists currently open TCP and UDP ports on the system using `lsof` or `netstat`, utilizing advanced filtering to list both listening TCP sockets and open UDP ports accurately while preserving table column headers.
 *   **Reboot Check:** Intelligently parses system update output to accurately notify you if a restart is required after installing macOS system updates.
-*   **Robust Non-Interactive Execution:** Safe integration with headless and pipelined scenarios across all prompts (including self-update confirmations and system update confirmations).
-*   **Automatic Self-Update:** The script can check for and offer to install its own latest version from the GitHub repository. Built with instant CDN cache-busting logic, graceful offline network fallbacks, single-pass `softwareupdate -l` optimization, and single-pass relaunch optimization.
+*   **Robust Non-Interactive Execution:** Prompts are read from the terminal, so the script stays interactive when its output is piped (e.g. to `tee`), and every prompt falls back to a safe default in headless runs.
+*   **Failure Summary:** Every update and cleanup step is checked, including the `softwareupdate -l` check itself. Failed steps are listed at the end and the script exits with a non-zero status.
+*   **Automatic Self-Update:** The script can check for and offer to install its own latest version from the GitHub repository. Built with instant CDN cache-busting logic, graceful offline network fallbacks, single-pass `softwareupdate -l` optimization, and single-pass relaunch optimization. It only offers an update when the published `SCRIPT_VERSION` is newer than the local one.
 *   **Version Display:** Shows the script's current version at startup.
 *   **Simple Banner:** Displays a clean, informative banner instead of ASCII art.
 
