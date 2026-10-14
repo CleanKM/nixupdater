@@ -14,7 +14,7 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.12.0"
+SCRIPT_VERSION="1.12.1"
 
 # --- Temporary Files (removed on exit) ---
 TEMP_DIR=$(mktemp -d) || { echo -e "${RED}Error: Could not create a temporary directory. Exiting.${NC}"; exit 1; }
@@ -543,11 +543,27 @@ case "$PACKAGE_MANAGER" in
 esac
 )
 
+# Inside a distrobox container, 'flatpak' forwards to the host, which only works as the desktop
+# user, not as root. Updates of the system installation are then run as that user (polkit allows
+# them for active sessions).
+FLATPAK_SYSTEM_AS_USER=false
+if command -v flatpak &> /dev/null && ! flatpak --version &> /dev/null && [ -n "$REAL_USER" ] && run_as_user flatpak --version &> /dev/null; then
+    FLATPAK_SYSTEM_AS_USER=true
+fi
+
+system_flatpak() {
+    if [ "$FLATPAK_SYSTEM_AS_USER" = true ]; then
+        run_as_user flatpak "$@"
+    else
+        flatpak "$@"
+    fi
+}
+
 FLATPAK_SYSTEM_UPDATES=""
 FLATPAK_USER_UPDATES=""
 if command -v flatpak &> /dev/null; then
     echo -n -e "${BLUE}Checking for Flatpak updates...${NC}"
-    FLATPAK_SYSTEM_UPDATES=$(flatpak remote-ls --system --updates 2>/dev/null)
+    FLATPAK_SYSTEM_UPDATES=$(system_flatpak remote-ls --system --updates 2>/dev/null)
     if [ -n "$REAL_USER" ]; then
         FLATPAK_USER_UPDATES=$(run_as_user flatpak remote-ls --user --updates 2>/dev/null)
     fi
@@ -790,10 +806,10 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_SYSTEM_UPDATES" ] || [ -n "$FLATPA
     # Flatpak Upgrade
     if [ -n "$FLATPAK_SYSTEM_UPDATES" ]; then
         echo -e "${BLUE}Upgrading system Flatpak packages...${NC}"
-        flatpak update --system -y
+        system_flatpak update --system -y
         finish_step "System Flatpak upgrade" $?
         echo -e "${BLUE}Removing unused Flatpak runtimes...${NC}"
-        flatpak uninstall --system --unused -y 2>/dev/null || true
+        system_flatpak uninstall --system --unused -y 2>/dev/null || true
     fi
     if [ -n "$FLATPAK_USER_UPDATES" ]; then
         echo -e "${BLUE}Upgrading Flatpak packages for $REAL_USER...${NC}"
@@ -982,8 +998,15 @@ case "$PACKAGE_MANAGER" in
         esac
         ;;
     "rpm-ostree")
-        if rpm-ostree status | grep -q -E "(pending)|Staged: yes"; then
+        # Deployments are listed newest first and the booted one is marked with ●. If the first
+        # one is not booted, a downloaded update (staged or finalized) is waiting for a reboot.
+        FIRST_DEPLOYMENT=$(rpm-ostree status 2>/dev/null | sed -n '/^Deployments:/{n;p;q}')
+        if [ -z "$FIRST_DEPLOYMENT" ]; then
+            REBOOT_STATUS="unknown"
+        elif [[ "$FIRST_DEPLOYMENT" != "●"* ]]; then
             REBOOT_STATUS="yes"
+            PENDING_VERSION=$(rpm-ostree status 2>/dev/null | sed -n '/^Deployments:/,${/Version:/{s/^ *Version: //p;q}}')
+            REBOOT_REASON="A newer deployment${PENDING_VERSION:+ ($PENDING_VERSION)} has been downloaded and will be used after a reboot."
         fi
         ;;
     "transactional-update")
@@ -1151,7 +1174,12 @@ fi
 
 echo ""
 echo -e "${MAGENTA}--- Systemd Service Status Audit ---${NC}"
-if command -v systemctl &> /dev/null; then
+if ! command -v systemctl &> /dev/null; then
+    echo -e "${YELLOW}systemctl not found. Skipping systemd service audit.${NC}"
+elif [ ! -d /run/systemd/system ]; then
+    # Containers (e.g. distrobox) usually do not run systemd as PID 1.
+    echo -e "${YELLOW}systemd is not running on this system (container?). Skipping systemd service audit.${NC}"
+else
     FAILED_UNITS=$(systemctl --failed --no-legend --plain 2>/dev/null || true)
     if [ -n "$FAILED_UNITS" ]; then
         echo -e "${RED}Warning: The following systemd units are in a failed state:${NC}"
@@ -1159,8 +1187,6 @@ if command -v systemctl &> /dev/null; then
     else
         echo -e "${GREEN}All systemd services are running normally.${NC}"
     fi
-else
-    echo -e "${YELLOW}systemctl not found. Skipping systemd service audit.${NC}"
 fi
 
 echo ""
@@ -1238,6 +1264,9 @@ fi
 if command -v btrfs &> /dev/null; then
     echo -e "${BLUE}Checking Btrfs filesystem status...${NC}"
     btrfs device stats / 2>/dev/null || true
+fi
+if ! command -v zpool &> /dev/null && ! command -v btrfs &> /dev/null; then
+    echo -e "${YELLOW}No ZFS or Btrfs tools found. Skipping storage health check.${NC}"
 fi
 
 echo ""

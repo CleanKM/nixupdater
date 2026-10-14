@@ -24,6 +24,7 @@ This project contains the `update.sh` script, a comprehensive tool for updating 
 *   **Error Reporting (v1.12+):** Every update, restart and cleanup step goes through `finish_step`. Failures are listed in a final summary and the script exits non-zero.
 *   **Interactivity Detection (v1.12+):** A single `INTERACTIVE` flag is set by trying to open `/dev/tty`, so piping output (e.g. to `tee`) keeps prompts working. All yes/no prompts go through `ask_yes_no`.
 *   **User-Level Tools (v1.12+):** `run_as_user` runs tools as `$SUDO_USER` with their `~/.local/bin` and `~/.cargo/bin` on PATH. User-writable directories are never added to root's PATH.
+*   **Container & Atomic Host Fixes (v1.12.1+):** The rpm-ostree reboot check flags any downloaded deployment listed above the booted one (Bluefin's automatic updates download them in the background). Inside a distrobox container, system Flatpak commands, which are forwarded to the host and fail as root, run as the desktop user. The systemd audit is skipped when systemd is not PID 1.
 *   **Compose by Project Name (v1.12+):** Compose projects are stopped and started with `docker compose -p <project> stop|start`, which restarts existing containers instead of recreating them.
 
 
