@@ -1,32 +1,9 @@
 #!/bin/bash
 
-# Export robust PATH to ensure all tools (including Linuxbrew) are accessible in headless contexts
-export PATH="/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
-
-# Function to get SHA256 checksum (cross-platform)
-get_sha256() {
-    if command -v sha256sum &> /dev/null; then
-        sha256sum "$1" | awk '{print $1}'
-    elif command -v shasum &> /dev/null; then
-        shasum -a 256 "$1" | awk '{print $1}'
-    else
-        echo "" # Indicate failure
-    fi
-}
-
-# Helper function to run commands as non-root user when elevated
-run_as_user() {
-    if [ "$EUID" -eq 0 ] && [ -n "$SUDO_USER" ]; then
-        sudo -u "$SUDO_USER" "$@"
-    else
-        "$@"
-    fi
-}
-
-# Helper function to run Homebrew as the non-root user when elevated
-run_brew() {
-    run_as_user brew "$@"
-}
+# Make sure system tools are found in headless contexts (cron, minimal sudo PATH). User-writable
+# directories such as Linuxbrew's are deliberately left out: this script runs as root, and
+# anything placed there would shadow system commands.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
 # --- Color Codes ---
 RED='\033[0;31m'
@@ -37,7 +14,71 @@ MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-SCRIPT_VERSION="1.11.0"
+SCRIPT_VERSION="1.12.0"
+
+# --- Temporary Files (removed on exit) ---
+TEMP_DIR=$(mktemp -d) || { echo -e "${RED}Error: Could not create a temporary directory. Exiting.${NC}"; exit 1; }
+trap 'rm -rf "$TEMP_DIR"' EXIT
+
+# --- Helpers ---
+
+# Prompts are read from /dev/tty, so the script is interactive whenever a terminal can be
+# opened, even if stdout is piped (e.g. to tee). Under cron there is no terminal.
+if ( : < /dev/tty ) 2>/dev/null; then
+    INTERACTIVE=true
+else
+    INTERACTIVE=false
+fi
+
+# ask_yes_no "Question" [y|n]: returns 0 for yes. The default is used for an empty
+# answer and in non-interactive mode.
+ask_yes_no() {
+    local prompt="$1" default="${2:-n}" hint="y/N" answer
+    [ "$default" = "y" ] && hint="Y/n"
+    if [ "$INTERACTIVE" != true ]; then
+        echo -e "${YELLOW}${prompt} [${hint}] Non-interactive mode detected. Using default: ${default}.${NC}"
+        [ "$default" = "y" ]
+        return
+    fi
+    echo -n -e "${YELLOW}${prompt} [${hint}]: ${NC}"
+    read -r answer < /dev/tty
+    [[ "${answer:-$default}" =~ ^([yY][eE][sS]|[yY])$ ]]
+}
+
+# Steps that failed, listed in the final summary.
+FAILURES=()
+
+# finish_step "Description" exit_status: prints the outcome and remembers failures.
+finish_step() {
+    local desc="$1" status="$2"
+    if [ "$status" -eq 0 ]; then
+        echo -e "${GREEN}$desc complete.${NC}"
+    else
+        FAILURES+=("$desc")
+        echo -e "${RED}$desc failed (exit code $status).${NC}"
+    fi
+}
+
+# Returns 0 if version $1 is newer than version $2.
+version_gt() {
+    [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)" = "$1" ]
+}
+
+# Runs a command as the user who launched the script through sudo, with that user's tool
+# directories on PATH (sudo would otherwise use its own secure_path). It runs from / so the
+# user can always read the working directory.
+run_as_user() {
+    if [ "$EUID" -eq 0 ] && [ -n "$REAL_USER" ]; then
+        (cd / && sudo -u "$REAL_USER" -H env PATH="$REAL_USER_PATH" "$@")
+    else
+        "$@"
+    fi
+}
+
+# Returns 0 if the invoking user has the given command on their PATH.
+user_has_command() {
+    run_as_user sh -c 'command -v "$1"' _ "$1" > /dev/null 2>&1
+}
 
 # --- Self-Update Check ---
 SKIP_SELF_UPDATE=false
@@ -52,126 +93,94 @@ for arg in "$@"; do
 done
 
 SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")" # Get absolute path of the current script
+GITHUB_RAW_URL="https://raw.githubusercontent.com/CleanKM/nixupdater/main/linux/update.sh"
 
 if [ "$SKIP_SELF_UPDATE" = true ]; then
     if [ "$NIXUPDATER_SKIP_CHECK" != "true" ]; then
         echo -e "${YELLOW}Skipping self-update check due to 'noupdate' argument.${NC}"
     fi
-else
-    GITHUB_RAW_URL="https://raw.githubusercontent.com/CleanKM/nixupdater/main/linux/update.sh"
-TEMP_SCRIPT_PATH=$(mktemp)
-trap 'rm -f "$TEMP_SCRIPT_PATH"' EXIT
-
-# Check if curl is available
-if ! command -v curl &> /dev/null; then
+elif ! command -v curl &> /dev/null; then
     echo -e "${YELLOW}Warning: 'curl' not found. Cannot check for script updates.${NC}"
-    rm -f "$TEMP_SCRIPT_PATH"
-    trap - EXIT
 else
+    TEMP_SCRIPT_PATH="$TEMP_DIR/update.sh"
     # Download remote script with cache-busting and network timeouts
-    CACHE_BUSTER=$(date +%s)
-    if ! curl -sSfL --connect-timeout 5 --max-time 10 -H "Cache-Control: no-cache" "$GITHUB_RAW_URL?t=$CACHE_BUSTER" -o "$TEMP_SCRIPT_PATH"; then
+    if ! curl -sSfL --connect-timeout 5 --max-time 10 -H "Cache-Control: no-cache" "$GITHUB_RAW_URL?t=$(date +%s)" -o "$TEMP_SCRIPT_PATH"; then
         echo -e "${RED}Error: Failed to download remote script or network is down. Skipping self-update.${NC}"
-        rm -f "$TEMP_SCRIPT_PATH"
-        trap - EXIT
     else
-        LOCAL_CHECKSUM=$(get_sha256 "$SCRIPT_PATH")
-        REMOTE_CHECKSUM=$(get_sha256 "$TEMP_SCRIPT_PATH")
+        REMOTE_VERSION=$(sed -n 's/^SCRIPT_VERSION="\(.*\)"$/\1/p' "$TEMP_SCRIPT_PATH" | head -n 1)
 
-        if [ -z "$LOCAL_CHECKSUM" ] || [ -z "$REMOTE_CHECKSUM" ]; then
-            echo -e "${RED}Error: Checksum utility not found or failed. Skipping self-update.${NC}"
-            rm -f "$TEMP_SCRIPT_PATH"
-            trap - EXIT
-        elif [ "$LOCAL_CHECKSUM" != "$REMOTE_CHECKSUM" ]; then
-            echo -e "${YELLOW}A new version of the script is available!${NC}"
-            echo -e "${YELLOW}Do you want to update to the latest version? (y/n)${NC}"
-            RESPONSE_IS_YES=false
-            if [ -t 1 ]; then
-                read -r response < /dev/tty
-                if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-                    RESPONSE_IS_YES=true
-                else
-                    echo -e "${YELLOW}Skipping script update.${NC}"
-                fi
-            else
-                echo -e "${YELLOW}Non-interactive mode detected. Skipping script update.${NC}"
-            fi
-
-            if [ "$RESPONSE_IS_YES" = true ]; then
+        if [ -z "$REMOTE_VERSION" ] || ! bash -n "$TEMP_SCRIPT_PATH" 2>/dev/null; then
+            echo -e "${RED}Error: The downloaded script looks invalid. Skipping self-update.${NC}"
+        elif version_gt "$REMOTE_VERSION" "$SCRIPT_VERSION"; then
+            echo -e "${YELLOW}A new version of the script is available: v${SCRIPT_VERSION} -> v${REMOTE_VERSION}${NC}"
+            if ask_yes_no "Do you want to update to the latest version?" n; then
                 echo -e "${BLUE}Updating script...${NC}"
+                # Keep the original file's permissions and owner.
+                chmod --reference="$SCRIPT_PATH" "$TEMP_SCRIPT_PATH" 2>/dev/null
+                chown --reference="$SCRIPT_PATH" "$TEMP_SCRIPT_PATH" 2>/dev/null
                 if mv "$TEMP_SCRIPT_PATH" "$SCRIPT_PATH"; then
-                    chmod +x "$SCRIPT_PATH"
                     echo -e "${GREEN}Script updated successfully. Relaunching...${NC}"
                     export NIXUPDATER_SKIP_CHECK=true
-                    trap - EXIT
-                    exec "$SCRIPT_PATH" "$@" # Relaunch the updated script
+                    rm -rf "$TEMP_DIR" # exec skips the EXIT trap
+                    exec bash "$SCRIPT_PATH" "$@" # Relaunch the updated script
                 else
                     echo -e "${RED}Error: Failed to replace the script. Please update manually.${NC}"
-                    rm -f "$TEMP_SCRIPT_PATH"
-                    trap - EXIT
                 fi
             else
                 echo -e "${YELLOW}Skipping script update.${NC}"
-                rm -f "$TEMP_SCRIPT_PATH"
-                trap - EXIT
             fi
+        elif version_gt "$SCRIPT_VERSION" "$REMOTE_VERSION"; then
+            echo -e "${YELLOW}Local version (v${SCRIPT_VERSION}) is newer than the published one (v${REMOTE_VERSION}). Skipping self-update.${NC}"
         else
-            echo -e "${GREEN}Script is already up to date.${NC}"
-            rm -f "$TEMP_SCRIPT_PATH"
-            trap - EXIT
+            echo -e "${GREEN}Script is already up to date (v${SCRIPT_VERSION}).${NC}"
         fi
     fi
-fi
 fi
 
 # --- Sudo check and prompt ---
-SUDO=''
 if [ "$EUID" -ne 0 ]; then
-    # Not running as root
     echo -e "${BLUE}This script requires sudo privileges to run.${NC}"
 
     if id -Gn "${SUDO_USER:-$USER}" 2>/dev/null | grep -qE '\b(sudo|wheel)\b'; then
-        # User is in the sudo group, offer to relaunch
-        echo -e "${YELLOW}You are in the 'sudo' group. Do you want to relaunch this script with sudo? (y/n)${NC}"
-        RESPONSE_IS_YES=false
-        if [ -t 1 ]; then
-            read -r response < /dev/tty # Ensure read from tty
-            if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-                RESPONSE_IS_YES=true
-            else
-                echo -e "${YELLOW}Sudo relaunch declined.${NC}"
-            fi
-        else
-            echo -e "${YELLOW}Non-interactive mode detected. Sudo relaunch declined.${NC}"
-        fi
-
-        if [ "$RESPONSE_IS_YES" = true ]; then
+        if ask_yes_no "You are in the 'sudo' group. Do you want to relaunch this script with sudo?" n; then
             echo -e "${BLUE}Relaunching with sudo...${NC}"
-            exec sudo NIXUPDATER_SKIP_CHECK=true "$SCRIPT_PATH" "$@" # Relaunch the script with sudo
-        else
-            echo -e "${RED}Sudo privileges declined. Exiting.${NC}"
-            exit 1
+            rm -rf "$TEMP_DIR" # exec skips the EXIT trap
+            exec sudo NIXUPDATER_SKIP_CHECK=true bash "$SCRIPT_PATH" "$@" # Relaunch the script with sudo
         fi
+        echo -e "${RED}Sudo privileges declined. Exiting.${NC}"
     else
-        # User is not in the sudo group
         echo -e "${RED}You are not currently root or in the 'sudo' group. Exiting.${NC}"
-        exit 1
     fi
-fi
-
-# If we reach here, the script is either already running as root,
-# or it was successfully relaunched with sudo.
-# In either case, $EUID should now be 0.
-
-if [ "$EUID" -eq 0 ]; then
-    SUDO='' # We are root, no need to prefix with sudo internally
-    echo -e "${GREEN}Sudo privileges obtained.${NC}"
-else
-    # This case should ideally not be reached if the logic above is correct.
-    # It means $EUID is not 0, but we didn't exit or relaunch.
-    echo -e "${RED}Unexpected state: Script is not running as root. Exiting.${NC}"
     exit 1
 fi
+echo -e "${GREEN}Sudo privileges obtained.${NC}"
+
+# The user who launched the script through sudo (empty when run directly as root). User-level
+# tools (Flatpak --user, pipx, cargo, AUR helpers) are run as this user.
+REAL_USER=""
+REAL_HOME=""
+REAL_USER_PATH="$PATH"
+if [ -n "$SUDO_USER" ] && [ "$SUDO_USER" != "root" ]; then
+    REAL_USER="$SUDO_USER"
+    REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
+    REAL_USER_PATH="$REAL_HOME/.local/bin:$REAL_HOME/.cargo/bin:/home/linuxbrew/.linuxbrew/bin:$PATH"
+fi
+
+# Homebrew refuses to run as root, so it runs as the owner of the installation. It is found by
+# absolute path instead of through PATH (see the PATH note at the top).
+BREW_BIN=""
+BREW_USER=""
+for candidate in /home/linuxbrew/.linuxbrew/bin/brew ${REAL_HOME:+"$REAL_HOME/.linuxbrew/bin/brew"}; do
+    if [ -x "$candidate" ]; then
+        BREW_BIN="$candidate"
+        BREW_USER=$(stat -c %U "$(readlink -f "$BREW_BIN")")
+        break
+    fi
+done
+
+run_brew() {
+    (cd / && sudo -u "$BREW_USER" -H "$BREW_BIN" "$@")
+}
 
 # --- Script Banner ---
 echo -e "${CYAN}------------------------------------------${NC}"
@@ -179,28 +188,73 @@ echo -e "${CYAN}  Linux System Update Script - v${SCRIPT_VERSION}  ${NC}"
 echo -e "${CYAN}------------------------------------------${NC}"
 echo ""
 
+# --- Docker Helpers ---
+declare -A CONTAINER_NAMES CONTAINER_PROJECTS COMPOSE_STOPPED_IDS
+
+# Reads the running containers into STANDALONE_IDS, COMPOSE_IDS and COMPOSE_PROJECTS (unique
+# project names), plus CONTAINER_NAMES / CONTAINER_PROJECTS keyed by container ID. One plain
+# 'docker ps' call, so it works on engines without label!= filter support.
+load_running_containers() {
+    STANDALONE_IDS=()
+    COMPOSE_IDS=()
+    COMPOSE_PROJECTS=()
+    CONTAINER_NAMES=()
+    CONTAINER_PROJECTS=()
+    local id name project
+    while IFS='|' read -r id name project; do
+        [ -z "$id" ] && continue
+        CONTAINER_NAMES[$id]="$name"
+        if [ -n "$project" ]; then
+            CONTAINER_PROJECTS[$id]="$project"
+            COMPOSE_IDS+=("$id")
+            [[ " ${COMPOSE_PROJECTS[*]} " == *" $project "* ]] || COMPOSE_PROJECTS+=("$project")
+        else
+            STANDALONE_IDS+=("$id")
+        fi
+    done < <(docker ps --format '{{.ID}}|{{.Names}}|{{.Label "com.docker.compose.project"}}' 2>/dev/null)
+}
+
+# Runs a Compose command on a project by name. It runs from / so a compose file in the current
+# directory is never picked up; without one, Compose works from the containers' labels.
+compose_project() {
+    local project="$1"
+    shift
+    (cd / && docker compose -p "$project" "$@")
+}
+
+# Starts a stopped Compose project, falling back to starting its containers directly.
+start_compose_project() {
+    local project="$1"
+    compose_project "$project" start && return 0
+    echo -e "${YELLOW}Compose could not start '$project'; starting its containers directly.${NC}"
+    [ -n "${COMPOSE_STOPPED_IDS[$project]}" ] || return 1
+    # The ID list is word-split on purpose
+    docker start ${COMPOSE_STOPPED_IDS[$project]} >/dev/null
+}
+
 # --- Docker Container Status ---
 if command -v docker &> /dev/null; then
-    # Standalone running:
-    STANDALONE_LIST=$($SUDO docker ps --filter "label!=com.docker.compose.project" --format "{{.Names}} ({{.ID}})" 2>/dev/null || true)
-    # Compose running:
-    COMPOSE_LIST=$($SUDO docker ps --filter "label=com.docker.compose.project" --format "{{.Names}} ({{.ID}}) [Compose Project: {{.Label \"com.docker.compose.project\"}}]" 2>/dev/null || true)
-    
-    if [ -n "$STANDALONE_LIST" ] || [ -n "$COMPOSE_LIST" ]; then
+    load_running_containers
+    if [ ${#STANDALONE_IDS[@]} -gt 0 ] || [ ${#COMPOSE_IDS[@]} -gt 0 ]; then
         echo -e "${MAGENTA}--- Running Docker Containers ---${NC}"
-        if [ -n "$COMPOSE_LIST" ]; then
+        if [ ${#COMPOSE_IDS[@]} -gt 0 ]; then
             echo -e "${CYAN}Docker Compose Containers:${NC}"
-            echo -e "${CYAN}$COMPOSE_LIST${NC}"
+            for ID in "${COMPOSE_IDS[@]}"; do
+                echo -e "${CYAN}${CONTAINER_NAMES[$ID]} ($ID) [Compose Project: ${CONTAINER_PROJECTS[$ID]}]${NC}"
+            done
         fi
-        if [ -n "$STANDALONE_LIST" ]; then
+        if [ ${#STANDALONE_IDS[@]} -gt 0 ]; then
             echo -e "${CYAN}Standalone Containers (docker run):${NC}"
-            echo -e "${CYAN}$STANDALONE_LIST${NC}"
+            for ID in "${STANDALONE_IDS[@]}"; do
+                echo -e "${CYAN}${CONTAINER_NAMES[$ID]} ($ID)${NC}"
+            done
         fi
         echo ""
     fi
 fi
 
 # --- Spinner ---
+# spinner pid: animates while the process runs, then returns its exit status.
 spinner() {
     local pid=$1
     if [ ! -t 1 ]; then
@@ -217,6 +271,7 @@ spinner() {
         printf "\b\b\b\b\b\b"
     done
     printf "    \b\b\b\b"
+    wait "$pid"
 }
 
 # --- Distribution Detection ---
@@ -291,7 +346,7 @@ else
                 PACKAGE_MANAGER="xbps"
             elif echo "$ID_LIKE" | grep -qE '\b(gentoo)\b'; then
                 PACKAGE_MANAGER="emerge"
-            elif command -v apt &> /dev/null; then
+            elif command -v apt-get &> /dev/null; then
                 PACKAGE_MANAGER="apt"
                 echo -e "${GREEN}Found 'apt'. Proceeding.${NC}"
             elif command -v dnf5 &> /dev/null; then
@@ -333,13 +388,14 @@ else
 fi
 echo -e "${BLUE}Using package manager: ${GREEN}$PACKAGE_MANAGER${NC}"
 
-# Check for Arch AUR helpers
+# Check for Arch AUR helpers. They refuse to run as root, so they are only used when the
+# script was launched through sudo by a regular user.
 AUR_HELPER=""
-if [ "$PACKAGE_MANAGER" = "pacman" ]; then
-    if command -v yay &> /dev/null; then
+if [ "$PACKAGE_MANAGER" = "pacman" ] && [ -n "$REAL_USER" ]; then
+    if user_has_command yay; then
         AUR_HELPER="yay"
         echo -e "${BLUE}Found Arch AUR helper: ${GREEN}yay${NC}"
-    elif command -v paru &> /dev/null; then
+    elif user_has_command paru; then
         AUR_HELPER="paru"
         echo -e "${BLUE}Found Arch AUR helper: ${GREEN}paru${NC}"
     fi
@@ -369,7 +425,7 @@ echo -n -e "${BLUE}Checking for system updates...${NC}"
 (
 case "$PACKAGE_MANAGER" in
     "apt")
-        $SUDO DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update >/dev/null 2>&1
+        DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update >/dev/null 2>&1
         ;;
     "dnf5" | "dnf")
         ;;
@@ -377,46 +433,51 @@ case "$PACKAGE_MANAGER" in
         if command -v checkupdates &> /dev/null; then
             :
         else
-            $SUDO pacman -Sy >/dev/null 2>&1
+            pacman -Sy >/dev/null 2>&1
         fi
         ;;
     "apk")
-        $SUDO apk update >/dev/null 2>&1
+        apk update >/dev/null 2>&1
         ;;
     "zypper")
-        $SUDO zypper refresh >/dev/null 2>&1
+        zypper refresh >/dev/null 2>&1
         ;;
     "xbps")
-        $SUDO xbps-install -S >/dev/null 2>&1
+        xbps-install -S >/dev/null 2>&1
         ;;
     "emerge")
-        $SUDO emerge --sync >/dev/null 2>&1
+        emerge --sync >/dev/null 2>&1
         ;;
     "eopkg")
-        $SUDO eopkg update-repo >/dev/null 2>&1
+        eopkg update-repo >/dev/null 2>&1
         ;;
     "swupd")
-        $SUDO swupd check-update >/dev/null 2>&1
+        # 'swupd check-update' runs in the listing step below
         ;;
     "guix")
         guix pull --check >/dev/null 2>&1 || true
         ;;
     "rpm-ostree")
-        rpm-ostree upgrade --check >/dev/null 2>&1
+        rpm-ostree upgrade --check > "$TEMP_DIR/ostree-check" 2>&1
         ;;
     "transactional-update" | "nixos")
         ;;
 esac
-) & 
-spinner $!
-echo -e "${GREEN}Done!${NC}"
+) &
+if spinner $!; then
+    echo -e "${GREEN}Done!${NC}"
+else
+    echo -e "${RED}Failed!${NC}"
+    FAILURES+=("Checking for system updates")
+    echo -e "${YELLOW}Continuing with possibly outdated package information.${NC}"
+fi
 
 # Security Advisory Audit Check
 if command -v dnf5 &> /dev/null; then
-    SEC_INFO=$($SUDO dnf5 advisory summary 2>/dev/null | grep -iE 'security|critical|important' || true)
+    SEC_INFO=$(dnf5 advisory summary 2>/dev/null | grep -iE 'security|critical|important' || true)
     [ -n "$SEC_INFO" ] && echo -e "${YELLOW}Security Advisories (DNF5):${NC}\n${CYAN}$SEC_INFO${NC}\n"
 elif command -v dnf &> /dev/null; then
-    SEC_INFO=$($SUDO dnf updateinfo summary 2>/dev/null | grep -iE 'security|critical|important' || true)
+    SEC_INFO=$(dnf updateinfo summary 2>/dev/null | grep -iE 'security|critical|important' || true)
     [ -n "$SEC_INFO" ] && echo -e "${YELLOW}Security Advisories (DNF):${NC}\n${CYAN}$SEC_INFO${NC}\n"
 elif command -v arch-audit &> /dev/null; then
     SEC_INFO=$(arch-audit 2>/dev/null || true)
@@ -426,13 +487,13 @@ fi
 SYSTEM_UPDATES=$(
 case "$PACKAGE_MANAGER" in
     ("apt")
-        apt-get --just-print upgrade 2>/dev/null | grep "^Inst "
+        # --with-new-pkgs lets kernel updates (which come as new packages) through
+        apt-get --just-print --with-new-pkgs upgrade 2>/dev/null | grep "^Inst "
         ;;
-    ("dnf5")
-        dnf5 check-update 2>/dev/null | tail -n +2
-        ;;
-    ("dnf")
-        dnf check-update 2>/dev/null | tail -n +2
+    ("dnf5" | "dnf")
+        # Exit code 100 means updates are available; -q leaves only the package list.
+        DNF_OUTPUT=$("$PACKAGE_MANAGER" -q check-update 2>/dev/null)
+        [ $? -eq 100 ] && echo "$DNF_OUTPUT" | awk 'NF'
         ;;
     ("pacman")
         if command -v checkupdates &> /dev/null; then
@@ -440,9 +501,11 @@ case "$PACKAGE_MANAGER" in
         else
             pacman -Qu 2>/dev/null
         fi
+        # checkupdates and pacman only see repository packages
+        [ -n "$AUR_HELPER" ] && run_as_user "$AUR_HELPER" -Qua 2>/dev/null
         ;;
     ("apk")
-        apk list --upgradeable 2>/dev/null | tail -n +1
+        apk list --upgradeable 2>/dev/null
         ;;
     ("zypper")
         zypper list-updates 2>/dev/null | grep -E '^v \|'
@@ -451,10 +514,10 @@ case "$PACKAGE_MANAGER" in
         xbps-install -un 2>/dev/null
         ;;
     ("emerge")
-        emerge -pv --update --deep --newuse @world 2>/dev/null
+        emerge -pv --update --deep --newuse @world 2>/dev/null | grep '^\[ebuild'
         ;;
     ("eopkg")
-        eopkg check-update 2>/dev/null
+        eopkg list-upgrades 2>/dev/null | grep -vi "no packages to upgrade"
         ;;
     ("swupd")
         swupd check-update 2>/dev/null
@@ -463,7 +526,13 @@ case "$PACKAGE_MANAGER" in
         echo "Guix packages will be upgraded during the upgrade phase."
         ;;
     ("rpm-ostree")
-        rpm-ostree status -v | grep -q -E "AvailableUpdate: yes|Staged: yes" && echo "OSTree updates are available (pending deployment)."
+        if grep -q "AvailableUpdate" "$TEMP_DIR/ostree-check" 2>/dev/null; then
+            echo "OSTree update available:"
+            sed -n '/AvailableUpdate/,$p' "$TEMP_DIR/ostree-check" | tail -n +2
+        elif ! grep -qi "No updates available" "$TEMP_DIR/ostree-check" 2>/dev/null; then
+            # Unrecognized output: run the upgrade anyway, it does nothing if there is no update.
+            echo "Could not determine whether an OSTree update is available; the upgrade will check."
+        fi
         ;;
     ("transactional-update")
         echo "Transactional updates will be checked during the upgrade phase."
@@ -474,10 +543,14 @@ case "$PACKAGE_MANAGER" in
 esac
 )
 
-FLATPAK_UPDATES=""
+FLATPAK_SYSTEM_UPDATES=""
+FLATPAK_USER_UPDATES=""
 if command -v flatpak &> /dev/null; then
     echo -n -e "${BLUE}Checking for Flatpak updates...${NC}"
-    FLATPAK_UPDATES=$(flatpak remote-ls --updates)
+    FLATPAK_SYSTEM_UPDATES=$(flatpak remote-ls --system --updates 2>/dev/null)
+    if [ -n "$REAL_USER" ]; then
+        FLATPAK_USER_UPDATES=$(run_as_user flatpak remote-ls --user --updates 2>/dev/null)
+    fi
     echo -e "${GREEN}Done!${NC}"
 else
     echo -e "${YELLOW}Flatpak not found. Skipping Flatpak check.${NC}"
@@ -486,31 +559,31 @@ fi
 SNAP_UPDATES=""
 if command -v snap &> /dev/null; then
     echo -n -e "${BLUE}Checking for Snap updates...${NC}"
-    SNAP_OUTPUT_FILE=$(mktemp)
-    ( $SUDO snap refresh --list > "$SNAP_OUTPUT_FILE" 2>&1 ) &
-    SNAP_PID=$!
-    spinner $SNAP_PID
-    wait $SNAP_PID
-    SNAP_UPDATES_RAW=$(cat "$SNAP_OUTPUT_FILE")
-    rm "$SNAP_OUTPUT_FILE"
-    SNAP_UPDATES=$(echo "$SNAP_UPDATES_RAW" | grep -v "All snaps are up to date." | tail -n +2)
+    SNAP_OUTPUT_FILE="$TEMP_DIR/snap-updates"
+    snap refresh --list > "$SNAP_OUTPUT_FILE" 2>&1 &
+    spinner $!
+    SNAP_UPDATES=$(grep -v "All snaps are up to date." "$SNAP_OUTPUT_FILE" | tail -n +2)
     echo -e "${GREEN}Done!${NC}"
 else
     echo -e "${YELLOW}Snap not found. Skipping Snap check.${NC}"
 fi
 
 BREW_UPDATES=""
-if command -v brew &> /dev/null; then
-    echo -n -e "${BLUE}Checking for Homebrew updates...${NC}"
+if [ -z "$BREW_BIN" ]; then
+    echo -e "${YELLOW}Homebrew not found. Skipping Homebrew check.${NC}"
+elif [ "$BREW_USER" = "root" ]; then
+    echo -e "${YELLOW}Homebrew is owned by root and refuses to run as root. Skipping Homebrew check.${NC}"
+    BREW_BIN=""
+else
+    echo -n -e "${BLUE}Checking for Homebrew updates (as $BREW_USER)...${NC}"
+    run_brew update --quiet >/dev/null 2>&1
     BREW_UPDATES=$(run_brew outdated 2>/dev/null)
     echo -e "${GREEN}Done!${NC}"
-else
-    echo -e "${YELLOW}Homebrew not found. Skipping Homebrew check.${NC}"
 fi
 echo ""
 
 # --- List Updates and Upgrade ---
-if [ -z "$SYSTEM_UPDATES" ] && [ -z "$FLATPAK_UPDATES" ] && [ -z "$SNAP_UPDATES" ] && [ -z "$BREW_UPDATES" ]; then
+if [ -z "$SYSTEM_UPDATES" ] && [ -z "$FLATPAK_SYSTEM_UPDATES" ] && [ -z "$FLATPAK_USER_UPDATES" ] && [ -z "$SNAP_UPDATES" ] && [ -z "$BREW_UPDATES" ]; then
     echo -e "${GREEN}=========================${NC}"
     echo -e "${GREEN} Your system is up to date. ${NC}"
     echo -e "${GREEN}=========================${NC}"
@@ -518,35 +591,24 @@ fi
 
 
 # --- Docker Pre-Update Check ---
-DOCKER_STANDALONE_TO_RESTART=""
-DOCKER_COMPOSE_TO_RESTART=""
+DOCKER_STANDALONE_TO_RESTART=()
+DOCKER_COMPOSE_TO_RESTART=()
 if command -v docker &> /dev/null; then
     ALL_UPDATES_TEXT="${SYSTEM_UPDATES}${SNAP_UPDATES}${BREW_UPDATES}"
-    if echo "$ALL_UPDATES_TEXT" | grep -qiE '\b(docker|containerd)\b'; then
+    # Fedora ships Docker as moby-engine; runc and containerd updates also restart the daemon.
+    if echo "$ALL_UPDATES_TEXT" | grep -qiE '\b(docker|containerd|moby|runc)\b'; then
         echo -e "${YELLOW}Docker-related update found.${NC}"
-        
-        # 1. Identify Compose Project Configs (Running only)
-        COMPOSE_CONFIGS=$($SUDO docker ps --filter "label=com.docker.compose.project.config_files" --format '{{.Label "com.docker.compose.project.config_files"}}' | awk 'NF' | sort -u)
-        
-        # 2. Identify Standalone Containers (Running only)
-        # First grab all running, then omit compose ones
-        ALL_RUNNING=$($SUDO docker ps -q)
-        COMPOSE_RUNNING=$($SUDO docker ps -q --filter "label=com.docker.compose.project.config_files")
-        if [ -n "$COMPOSE_RUNNING" ]; then
-            STANDALONE_CONTAINERS=$(echo "$ALL_RUNNING" | grep -vF -f <(echo "$COMPOSE_RUNNING") || true)
-        else
-            STANDALONE_CONTAINERS="$ALL_RUNNING"
-        fi
-        
-        if [ -n "$COMPOSE_CONFIGS" ] || [ -n "$STANDALONE_CONTAINERS" ]; then
+        load_running_containers
+
+        if [ ${#COMPOSE_PROJECTS[@]} -gt 0 ] || [ ${#STANDALONE_IDS[@]} -gt 0 ]; then
             echo -e "${YELLOW}Docker containers are currently running, but a Docker/containerd update is available.${NC}"
             echo -e "${YELLOW}It is recommended to stop them before updating. Do you want to:${NC}"
             echo -e "${CYAN}[1] Stop ALL running containers automatically${NC}"
             echo -e "${CYAN}[2] Select which containers/projects to stop individually${NC}"
             echo -e "${CYAN}[3] Skip stopping containers${NC}"
-            
+
             STOP_MODE="1"
-            if [ -t 1 ]; then
+            if [ "$INTERACTIVE" = true ]; then
                 echo -n -e "${YELLOW}Enter your choice [1-3] (default 1): ${NC}"
                 read -r response < /dev/tty
                 if [[ "$response" == "2" ]]; then STOP_MODE="2"; fi
@@ -555,85 +617,63 @@ if command -v docker &> /dev/null; then
                 echo -e "${YELLOW}Non-interactive mode detected. Defaulting to [1] (Stop ALL).${NC}"
             fi
 
-            if [ "$STOP_MODE" == "1" ] || [ "$STOP_MODE" == "2" ]; then
+            if [ "$STOP_MODE" != "3" ]; then
+                SELECTED_COMPOSE=("${COMPOSE_PROJECTS[@]}")
+                SELECTED_STANDALONE=("${STANDALONE_IDS[@]}")
+
                 if [ "$STOP_MODE" == "2" ]; then
-                    # Interactive selection loop
-                    SELECTED_COMPOSE=""
-                    SELECTED_STANDALONE=""
-                    
-                    if [ -n "$COMPOSE_CONFIGS" ]; then
+                    SELECTED_COMPOSE=()
+                    SELECTED_STANDALONE=()
+                    if [ ${#COMPOSE_PROJECTS[@]} -gt 0 ]; then
                         echo -e "${BLUE}--- Select Compose Projects ---${NC}"
-                        while IFS= read -r CONF; do
-                            [ -z "$CONF" ] && continue
-                            echo -n -e "${CYAN}Stop Compose Project [$CONF]? (y/N): ${NC}"
-                            read -r ans < /dev/tty
-                            if [[ "$ans" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-                                SELECTED_COMPOSE="$SELECTED_COMPOSE$CONF\n"
-                            fi
-                        done <<< "$COMPOSE_CONFIGS"
-                        COMPOSE_CONFIGS=$(echo -e -n "$SELECTED_COMPOSE" | sed '/^$/d')
-                    fi
-                    
-                    if [ -n "$STANDALONE_CONTAINERS" ]; then
-                        echo -e "${BLUE}--- Select Standalone Containers ---${NC}"
-                        for ID in $STANDALONE_CONTAINERS; do
-                            [ -z "$ID" ] && continue
-                            CNAME=$($SUDO docker inspect --format="{{.Name}}" "$ID" 2>/dev/null)
-                            CNAME=${CNAME#/} # strip leading slash
-                            echo -n -e "${CYAN}Stop Standalone Container $CNAME ($ID)? (y/N): ${NC}"
-                            read -r ans < /dev/tty
-                            if [[ "$ans" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-                                SELECTED_STANDALONE="$SELECTED_STANDALONE$ID "
-                            fi
+                        for PROJECT in "${COMPOSE_PROJECTS[@]}"; do
+                            ask_yes_no "Stop Compose project [$PROJECT]?" n && SELECTED_COMPOSE+=("$PROJECT")
                         done
-                        STANDALONE_CONTAINERS=$(echo -n "$SELECTED_STANDALONE" | xargs)
+                    fi
+                    if [ ${#STANDALONE_IDS[@]} -gt 0 ]; then
+                        echo -e "${BLUE}--- Select Standalone Containers ---${NC}"
+                        for ID in "${STANDALONE_IDS[@]}"; do
+                            ask_yes_no "Stop standalone container ${CONTAINER_NAMES[$ID]} ($ID)?" n && SELECTED_STANDALONE+=("$ID")
+                        done
                     fi
                 fi
 
                 echo -e "${BLUE}Stopping selected Docker containers prior to update...${NC}"
-                
-                # Stop Compose Projects
-                if [ -n "$COMPOSE_CONFIGS" ]; then
-                    DOCKER_COMPOSE_TO_RESTART="$COMPOSE_CONFIGS"
-                    echo -e "${CYAN}Stopping Docker Compose environments:${NC}"
-                    while IFS= read -r CONF_FILES; do
-                        [ -z "$CONF_FILES" ] && continue
-                        COMPOSE_ARGS=()
-                        IFS=',' read -ra FILES <<< "$CONF_FILES"
-                        for FILE in "${FILES[@]}"; do
-                            COMPOSE_ARGS+=("-f" "$FILE")
-                        done
-                        echo -e " ${YELLOW}-> docker compose ${COMPOSE_ARGS[*]} stop${NC}"
-                        $SUDO docker compose "${COMPOSE_ARGS[@]}" stop || true
-                    done <<< "$COMPOSE_CONFIGS"
+
+                # Stop Compose projects. Container IDs are kept as a fallback for restarting.
+                if [ ${#SELECTED_COMPOSE[@]} -gt 0 ]; then
+                    echo -e "${CYAN}Stopping Docker Compose projects:${NC}"
+                    for PROJECT in "${SELECTED_COMPOSE[@]}"; do
+                        COMPOSE_STOPPED_IDS[$PROJECT]=$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT" | xargs)
+                        echo -e " ${YELLOW}-> docker compose -p $PROJECT stop${NC}"
+                        if ! compose_project "$PROJECT" stop; then
+                            echo -e "${YELLOW}Compose could not stop '$PROJECT'; stopping its containers directly.${NC}"
+                            # The ID list is word-split on purpose
+                            [ -n "${COMPOSE_STOPPED_IDS[$PROJECT]}" ] && docker stop ${COMPOSE_STOPPED_IDS[$PROJECT]} >/dev/null
+                        fi
+                        DOCKER_COMPOSE_TO_RESTART+=("$PROJECT")
+                    done
                 fi
-                
-                # Stop Standalone Containers
-                if [ -n "$STANDALONE_CONTAINERS" ]; then
-                    DOCKER_STANDALONE_TO_RESTART="$STANDALONE_CONTAINERS"
+
+                # Stop standalone containers
+                if [ ${#SELECTED_STANDALONE[@]} -gt 0 ]; then
                     echo -e "${CYAN}Stopping standalone containers:${NC}"
-                    $SUDO docker stop $STANDALONE_CONTAINERS >/dev/null 2>&1 || true
+                    docker stop "${SELECTED_STANDALONE[@]}" >/dev/null 2>&1 || true
+                    DOCKER_STANDALONE_TO_RESTART=("${SELECTED_STANDALONE[@]}")
                 fi
-                
+
                 # Verify stop - only check targeted containers
-                REMAINING_TARGETED=""
-                for ID in $STANDALONE_CONTAINERS; do
-                    [ -z "$ID" ] && continue
-                    STILL_UP=$($SUDO docker ps -q --filter "id=$ID" 2>/dev/null)
-                    [ -n "$STILL_UP" ] && REMAINING_TARGETED="$REMAINING_TARGETED $ID"
+                REMAINING_TARGETED=()
+                for ID in "${SELECTED_STANDALONE[@]}"; do
+                    [ -n "$(docker ps -q --filter "id=$ID" 2>/dev/null)" ] && REMAINING_TARGETED+=("${CONTAINER_NAMES[$ID]}")
                 done
-                if [ -n "$COMPOSE_CONFIGS" ]; then
-                    while IFS= read -r CONF_FILES_CHK; do
-                        [ -z "$CONF_FILES_CHK" ] && continue
-                        STILL_UP=$($SUDO docker ps -q --filter "label=com.docker.compose.project.config_files=$CONF_FILES_CHK" 2>/dev/null)
-                        [ -n "$STILL_UP" ] && REMAINING_TARGETED="$REMAINING_TARGETED compose:$(basename "$(dirname "$CONF_FILES_CHK")")"
-                    done <<< "$COMPOSE_CONFIGS"
-                fi
-                REMAINING_TARGETED=$(echo "$REMAINING_TARGETED" | xargs)
-                if [ -z "$REMAINING_TARGETED" ]; then
+                for PROJECT in "${SELECTED_COMPOSE[@]}"; do
+                    [ -n "$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT" 2>/dev/null)" ] && REMAINING_TARGETED+=("compose:$PROJECT")
+                done
+                if [ ${#REMAINING_TARGETED[@]} -eq 0 ]; then
                     echo -e "${GREEN}Confirmed: All targeted containers are stopped.${NC}"
                 else
-                    echo -e "${YELLOW}Warning: Some targeted containers may still be running: ${REMAINING_TARGETED}${NC}"
+                    echo -e "${YELLOW}Warning: Some targeted containers may still be running: ${REMAINING_TARGETED[*]}${NC}"
                 fi
             else
                 echo -e "${YELLOW}Skipping Docker container shutdown. Proceeding with update...${NC}"
@@ -645,22 +685,96 @@ if command -v docker &> /dev/null; then
 fi
 
 # --- Upgrade ---
-if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES" ] || [ -n "$BREW_UPDATES" ]; then
+upgrade_system() {
+    case "$PACKAGE_MANAGER" in
+        "apt")
+            local apt_opts=(-y --with-new-pkgs)
+            if [ "$INTERACTIVE" != true ]; then
+                # Keep existing config files rather than stopping at dpkg's prompt.
+                apt_opts+=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+            fi
+            DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get upgrade "${apt_opts[@]}"
+            ;;
+        "dnf5")
+            dnf5 upgrade -y
+            ;;
+        "dnf")
+            dnf upgrade -y
+            ;;
+        "pacman")
+            if [ -n "$AUR_HELPER" ]; then
+                echo -e "${BLUE}Upgrading system and AUR packages using $AUR_HELPER...${NC}"
+                run_as_user "$AUR_HELPER" -Syu --noconfirm
+            else
+                pacman -Syu --noconfirm
+            fi
+            ;;
+        "apk")
+            apk upgrade
+            ;;
+        "zypper")
+            if grep -q -i "tumbleweed" /etc/os-release 2>/dev/null; then
+                zypper --non-interactive dup
+            else
+                zypper --non-interactive up
+            fi
+            ;;
+        "xbps")
+            xbps-install -Syu -y
+            ;;
+        "emerge")
+            emerge -uDNv @world
+            ;;
+        "eopkg")
+            eopkg upgrade -y
+            ;;
+        "swupd")
+            swupd update
+            ;;
+        "guix")
+            guix pull && guix package -u
+            ;;
+        "rpm-ostree")
+            if command -v bootc &> /dev/null && ! grep -q -E -e "LockLayering=false" /etc/rpm-ostreed.conf 2>/dev/null; then
+                bootc upgrade
+            else
+                rpm-ostree upgrade
+            fi
+            ;;
+        "transactional-update")
+            transactional-update dup
+            ;;
+        "nixos")
+            if [ -f /etc/nixos/flake.nix ] || [ -f /etc/nixos/flake.lock ]; then
+                echo -e "${BLUE}Updating NixOS Flake...${NC}"
+                nix flake update --flake /etc/nixos && nixos-rebuild switch --upgrade
+            else
+                nix-channel --update && nixos-rebuild switch --upgrade
+            fi
+            ;;
+    esac
+}
+
+if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_SYSTEM_UPDATES" ] || [ -n "$FLATPAK_USER_UPDATES" ] || [ -n "$SNAP_UPDATES" ] || [ -n "$BREW_UPDATES" ]; then
     echo -e "${YELLOW}--- Pending Updates ---${NC}"
     if [ -n "$SYSTEM_UPDATES" ]; then
-        echo -e "${CYAN}--- System Updates ---""${NC}"
+        echo -e "${CYAN}--- System Updates ---${NC}"
         echo "$SYSTEM_UPDATES"
     fi
-    if [ -n "$FLATPAK_UPDATES" ]; then
-        echo -e "${CYAN}--- Flatpak Updates ---""${NC}"
-        echo "$FLATPAK_UPDATES"
+    if [ -n "$FLATPAK_SYSTEM_UPDATES" ]; then
+        echo -e "${CYAN}--- Flatpak Updates (system) ---${NC}"
+        echo "$FLATPAK_SYSTEM_UPDATES"
+    fi
+    if [ -n "$FLATPAK_USER_UPDATES" ]; then
+        echo -e "${CYAN}--- Flatpak Updates (user: $REAL_USER) ---${NC}"
+        echo "$FLATPAK_USER_UPDATES"
     fi
     if [ -n "$SNAP_UPDATES" ]; then
-        echo -e "${CYAN}--- Snap Updates ---""${NC}"
+        echo -e "${CYAN}--- Snap Updates ---${NC}"
         echo "$SNAP_UPDATES"
     fi
     if [ -n "$BREW_UPDATES" ]; then
-        echo -e "${CYAN}--- Homebrew Updates ---""${NC}"
+        echo -e "${CYAN}--- Homebrew Updates ---${NC}"
         echo "$BREW_UPDATES"
     fi
     echo ""
@@ -669,434 +783,371 @@ if [ -n "$SYSTEM_UPDATES" ] || [ -n "$FLATPAK_UPDATES" ] || [ -n "$SNAP_UPDATES"
     # System Upgrade
     if [ -n "$SYSTEM_UPDATES" ]; then
         echo -e "${BLUE}Upgrading system packages...${NC}"
-        case "$PACKAGE_MANAGER" in
-            "apt")
-                $SUDO DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get upgrade -y
-                ;;
-            "dnf5")
-                $SUDO dnf5 upgrade -y
-                ;;
-            "dnf")
-                $SUDO dnf upgrade -y
-                ;;
-            "pacman")
-                if [ -n "$AUR_HELPER" ]; then
-                    echo -e "${BLUE}Upgrading system and AUR packages using $AUR_HELPER...${NC}"
-                    run_as_user "$AUR_HELPER" -Syu --noconfirm
-                else
-                    $SUDO pacman -Syu --noconfirm
-                fi
-                ;;
-            "apk")
-                $SUDO apk upgrade
-                ;;
-            "zypper")
-                if grep -q -i "tumbleweed" /etc/os-release 2>/dev/null; then
-                    $SUDO zypper --non-interactive dup
-                else
-                    $SUDO zypper --non-interactive up
-                fi
-                ;;
-            "xbps")
-                $SUDO xbps-install -Syu
-                ;;
-            "emerge")
-                $SUDO emerge -uDNv @world
-                ;;
-            "eopkg")
-                $SUDO eopkg upgrade -y
-                ;;
-            "swupd")
-                $SUDO swupd update
-                ;;
-            "guix")
-                guix pull && guix package -u
-                ;;
-            "rpm-ostree")
-                if command -v bootc &> /dev/null && ! grep -q -E -e "LockLayering=false" /etc/rpm-ostreed.conf 2>/dev/null; then
-                    $SUDO bootc upgrade
-                else
-                    $SUDO rpm-ostree upgrade
-                fi
-                ;;
-            "transactional-update")
-                $SUDO transactional-update dup
-                ;;
-            "nixos")
-                if [ -f /etc/nixos/flake.nix ] || [ -f /etc/nixos/flake.lock ]; then
-                    echo -e "${BLUE}Updating NixOS Flake...${NC}"
-                    $SUDO nix flake update --flake /etc/nixos && $SUDO nixos-rebuild switch --upgrade
-                else
-                    $SUDO nix-channel --update && $SUDO nixos-rebuild switch --upgrade
-                fi
-                ;;
-        esac
-        echo -e "${GREEN}System upgrade complete.${NC}"
-
-        # --- Docker Post-Update Restart ---
-        if [ -n "$DOCKER_COMPOSE_TO_RESTART" ] || [ -n "$DOCKER_STANDALONE_TO_RESTART" ]; then
-            # Build restart items list
-            RESTART_COMPOSE=()
-            while IFS= read -r line; do
-                [ -n "$line" ] && RESTART_COMPOSE+=("$line")
-            done <<< "$DOCKER_COMPOSE_TO_RESTART"
-
-            RESTART_STANDALONE=()
-            for ID in $DOCKER_STANDALONE_TO_RESTART; do
-                [ -n "$ID" ] && RESTART_STANDALONE+=("$ID")
-            done
-
-            while [ ${#RESTART_COMPOSE[@]} -gt 0 ] || [ ${#RESTART_STANDALONE[@]} -gt 0 ]; do
-                echo -e "\n${MAGENTA}--- Docker Post-Update Restart Menu ---${NC}"
-                echo -e "${BLUE}The following containers/projects were stopped and await restart:${NC}"
-                
-                idx=1
-                item_map=() # array to correlate choice index back to type and value
-                
-                # Print Compose
-                for i in "${!RESTART_COMPOSE[@]}"; do
-                    echo -e "${CYAN}[$idx] Compose Project: ${RESTART_COMPOSE[$i]}${NC}"
-                    item_map[$idx]="compose|$i"
-                    ((idx++))
-                done
-                
-                # Print Standalone
-                for i in "${!RESTART_STANDALONE[@]}"; do
-                    ID="${RESTART_STANDALONE[$i]}"
-                    CNAME=$($SUDO docker inspect --format="{{.Name}}" "$ID" 2>/dev/null)
-                    CNAME=${CNAME#/}
-                    echo -e "${CYAN}[$idx] Standalone: $CNAME ($ID)${NC}"
-                    item_map[$idx]="standalone|$i"
-                    ((idx++))
-                done
-
-                echo -e "${GREEN}[a] Restart all remaining items automatically${NC}"
-                echo -e "${YELLOW}[d] Done (leave remaining items stopped)${NC}"
-                
-                if ! [ -t 1 ]; then
-                    echo -e "${YELLOW}Non-interactive mode. Auto-restarting all.${NC}"
-                    ans="a"
-                else
-                    echo -n -e "${YELLOW}Select an option to restart it now: ${NC}"
-                    read -r ans < /dev/tty
-                fi
-
-                if [[ "$ans" == "a" || "$ans" == "A" ]]; then
-                    # Bulk start remaining
-                    if [ ${#RESTART_COMPOSE[@]} -gt 0 ]; then
-                        echo -e "${BLUE}Restarting remaining Compose environments...${NC}"
-                        for CONF_FILES in "${RESTART_COMPOSE[@]}"; do
-                            COMPOSE_ARGS=()
-                            IFS=',' read -ra FILES <<< "$CONF_FILES"
-                            for FILE in "${FILES[@]}"; do COMPOSE_ARGS+=("-f" "$FILE"); done
-                            echo -e " ${CYAN}-> docker compose ${COMPOSE_ARGS[*]} up -d${NC}"
-                            $SUDO docker compose "${COMPOSE_ARGS[@]}" up -d || true
-                        done
-                    fi
-                    if [ ${#RESTART_STANDALONE[@]} -gt 0 ]; then
-                        echo -e "${BLUE}Restarting remaining standalone Docker containers...${NC}"
-                        $SUDO docker start "${RESTART_STANDALONE[@]}" >/dev/null 2>&1
-                    fi
-                    echo -e "${GREEN}All leftover containers restarted.${NC}"
-                    break
-                elif [[ "$ans" == "d" || "$ans" == "D" ]]; then
-                    echo -e "${YELLOW}Leaving remaining items stopped.${NC}"
-                    break
-                elif [[ "$ans" =~ ^[0-9]+$ ]] && [ "$ans" -ge 1 ] && [ "$ans" -lt "$idx" ]; then
-                    # Parse selection
-                    item_type="${item_map[$ans]%|*}"
-                    arr_idx="${item_map[$ans]#*|}"
-                    
-                    if [ "$item_type" == "compose" ]; then
-                        CONF_FILES="${RESTART_COMPOSE[$arr_idx]}"
-                        COMPOSE_ARGS=()
-                        IFS=',' read -ra FILES <<< "$CONF_FILES"
-                        for FILE in "${FILES[@]}"; do COMPOSE_ARGS+=("-f" "$FILE"); done
-                        echo -e "${BLUE}Starting Compose Project: $CONF_FILES${NC}"
-                        $SUDO docker compose "${COMPOSE_ARGS[@]}" up -d || true
-                        unset 'RESTART_COMPOSE[$arr_idx]'
-                        # Rebuild array to fix indices
-                        RESTART_COMPOSE=("${RESTART_COMPOSE[@]}")
-                    elif [ "$item_type" == "standalone" ]; then
-                        ID="${RESTART_STANDALONE[$arr_idx]}"
-                        echo -e "${BLUE}Starting Standalone Container: $ID${NC}"
-                        $SUDO docker start "$ID" >/dev/null 2>&1 || true
-                        unset 'RESTART_STANDALONE[$arr_idx]'
-                        RESTART_STANDALONE=("${RESTART_STANDALONE[@]}")
-                    fi
-                    echo -e "${GREEN}Item started!${NC}"
-                else
-                    echo -e "${RED}Invalid selection. Please try again.${NC}"
-                fi
-            done
-        fi
+        upgrade_system
+        finish_step "System upgrade" $?
     fi
 
     # Flatpak Upgrade
-    if [ -n "$FLATPAK_UPDATES" ]; then
-        echo -e "${BLUE}Upgrading Flatpak packages...${NC}"
-        flatpak update -y
+    if [ -n "$FLATPAK_SYSTEM_UPDATES" ]; then
+        echo -e "${BLUE}Upgrading system Flatpak packages...${NC}"
+        flatpak update --system -y
+        finish_step "System Flatpak upgrade" $?
         echo -e "${BLUE}Removing unused Flatpak runtimes...${NC}"
-        flatpak uninstall --unused -y 2>/dev/null || true
-        echo -e "${GREEN}Flatpak upgrade complete.${NC}"
+        flatpak uninstall --system --unused -y 2>/dev/null || true
+    fi
+    if [ -n "$FLATPAK_USER_UPDATES" ]; then
+        echo -e "${BLUE}Upgrading Flatpak packages for $REAL_USER...${NC}"
+        run_as_user flatpak update --user -y
+        finish_step "User Flatpak upgrade" $?
+        run_as_user flatpak uninstall --user --unused -y 2>/dev/null || true
     fi
 
     # Snap Upgrade
     if [ -n "$SNAP_UPDATES" ]; then
         echo -e "${BLUE}Upgrading Snap packages...${NC}"
-        $SUDO snap refresh
-        echo -e "${GREEN}Snap upgrade complete.${NC}"
+        snap refresh
+        finish_step "Snap upgrade" $?
     fi
 
     # Homebrew Upgrade
     if [ -n "$BREW_UPDATES" ]; then
-        echo -e "${BLUE}Upgrading Homebrew packages...${NC}"
+        echo -e "${BLUE}Upgrading Homebrew packages (as $BREW_USER)...${NC}"
         run_brew upgrade
+        finish_step "Homebrew upgrade" $?
         run_brew cleanup
-        echo -e "${GREEN}Homebrew upgrade complete.${NC}"
+    fi
+fi
+
+# --- Docker Post-Update Restart ---
+# Runs whenever containers were stopped, even if an upgrade step failed.
+RESTART_COMPOSE=("${DOCKER_COMPOSE_TO_RESTART[@]}")
+RESTART_STANDALONE=("${DOCKER_STANDALONE_TO_RESTART[@]}")
+
+while [ ${#RESTART_COMPOSE[@]} -gt 0 ] || [ ${#RESTART_STANDALONE[@]} -gt 0 ]; do
+    echo -e "\n${MAGENTA}--- Docker Post-Update Restart Menu ---${NC}"
+    echo -e "${BLUE}The following containers/projects were stopped and await restart:${NC}"
+
+    idx=1
+    item_map=() # array to correlate choice index back to type and value
+
+    # Print Compose
+    for i in "${!RESTART_COMPOSE[@]}"; do
+        echo -e "${CYAN}[$idx] Compose Project: ${RESTART_COMPOSE[$i]}${NC}"
+        item_map[$idx]="compose|$i"
+        ((idx++))
+    done
+
+    # Print Standalone
+    for i in "${!RESTART_STANDALONE[@]}"; do
+        ID="${RESTART_STANDALONE[$i]}"
+        echo -e "${CYAN}[$idx] Standalone: ${CONTAINER_NAMES[$ID]} ($ID)${NC}"
+        item_map[$idx]="standalone|$i"
+        ((idx++))
+    done
+
+    echo -e "${GREEN}[a] Restart all remaining items automatically${NC}"
+    echo -e "${YELLOW}[d] Done (leave remaining items stopped)${NC}"
+
+    if [ "$INTERACTIVE" != true ]; then
+        echo -e "${YELLOW}Non-interactive mode. Auto-restarting all.${NC}"
+        ans="a"
+    else
+        echo -n -e "${YELLOW}Select an option to restart it now: ${NC}"
+        read -r ans < /dev/tty
     fi
 
-    # Developer Package Managers Upgrade (pipx, cargo, npm)
-    if command -v pipx &> /dev/null; then
-        echo -e "${BLUE}Upgrading pipx packages...${NC}"
-        run_as_user pipx upgrade-all 2>/dev/null || true
-        echo -e "${GREEN}pipx upgrade complete.${NC}"
-    fi
+    if [[ "$ans" == "a" || "$ans" == "A" ]]; then
+        # Bulk start remaining
+        if [ ${#RESTART_COMPOSE[@]} -gt 0 ]; then
+            echo -e "${BLUE}Restarting remaining Compose projects...${NC}"
+            for PROJECT in "${RESTART_COMPOSE[@]}"; do
+                echo -e " ${CYAN}-> docker compose -p $PROJECT start${NC}"
+                start_compose_project "$PROJECT" || FAILURES+=("Restarting Compose project '$PROJECT'")
+            done
+        fi
+        if [ ${#RESTART_STANDALONE[@]} -gt 0 ]; then
+            echo -e "${BLUE}Restarting remaining standalone Docker containers...${NC}"
+            docker start "${RESTART_STANDALONE[@]}" >/dev/null || FAILURES+=("Restarting standalone containers")
+        fi
+        echo -e "${GREEN}All leftover containers restarted.${NC}"
+        break
+    elif [[ "$ans" == "d" || "$ans" == "D" ]]; then
+        echo -e "${YELLOW}Leaving remaining items stopped.${NC}"
+        break
+    elif [[ "$ans" =~ ^[0-9]+$ ]] && [ "$ans" -ge 1 ] && [ "$ans" -lt "$idx" ]; then
+        # Parse selection
+        item_type="${item_map[$ans]%|*}"
+        arr_idx="${item_map[$ans]#*|}"
 
-    if command -v cargo &> /dev/null && cargo install-update --help &> /dev/null; then
-        echo -e "${BLUE}Upgrading Cargo packages...${NC}"
-        run_as_user cargo install-update -a 2>/dev/null || true
-        echo -e "${GREEN}Cargo upgrade complete.${NC}"
+        if [ "$item_type" == "compose" ]; then
+            PROJECT="${RESTART_COMPOSE[$arr_idx]}"
+            echo -e "${BLUE}Starting Compose Project: $PROJECT${NC}"
+            if start_compose_project "$PROJECT"; then
+                echo -e "${GREEN}Item started!${NC}"
+            else
+                echo -e "${RED}Failed to start Compose project '$PROJECT'.${NC}"
+                FAILURES+=("Restarting Compose project '$PROJECT'")
+            fi
+            unset 'RESTART_COMPOSE[$arr_idx]'
+            # Rebuild array to fix indices
+            RESTART_COMPOSE=("${RESTART_COMPOSE[@]}")
+        elif [ "$item_type" == "standalone" ]; then
+            ID="${RESTART_STANDALONE[$arr_idx]}"
+            echo -e "${BLUE}Starting Standalone Container: ${CONTAINER_NAMES[$ID]} ($ID)${NC}"
+            if docker start "$ID" >/dev/null; then
+                echo -e "${GREEN}Item started!${NC}"
+            else
+                echo -e "${RED}Failed to start container ${CONTAINER_NAMES[$ID]}.${NC}"
+                FAILURES+=("Restarting container '${CONTAINER_NAMES[$ID]}'")
+            fi
+            unset 'RESTART_STANDALONE[$arr_idx]'
+            RESTART_STANDALONE=("${RESTART_STANDALONE[@]}")
+        fi
+    else
+        echo -e "${RED}Invalid selection. Please try again.${NC}"
     fi
+done
 
-    if command -v npm &> /dev/null; then
-        echo -e "${BLUE}Upgrading global npm packages...${NC}"
-        $SUDO npm update -g 2>/dev/null || true
-        echo -e "${GREEN}npm global upgrade complete.${NC}"
-    fi
+# --- Developer Package Managers Upgrade (pipx, cargo, npm) ---
+# These have no cheap "anything outdated?" check, so they run on every invocation.
+if user_has_command pipx; then
+    echo -e "${BLUE}Upgrading pipx packages...${NC}"
+    run_as_user pipx upgrade-all
+    finish_step "pipx upgrade" $?
+fi
+
+if run_as_user cargo install-update --help &> /dev/null; then
+    echo -e "${BLUE}Upgrading Cargo packages...${NC}"
+    run_as_user cargo install-update -a
+    finish_step "Cargo upgrade" $?
+fi
+
+if command -v npm &> /dev/null; then
+    echo -e "${BLUE}Upgrading global npm packages...${NC}"
+    npm update -g
+    finish_step "npm global upgrade" $?
 fi
 
 echo ""
 echo -e "${MAGENTA}--- Reboot & Service Restart Check ---${NC}"
 # Service Restart Audit (Services running outdated in-memory libraries)
 if command -v dnf5 &> /dev/null; then
-    SERVICES_TO_RESTART=$($SUDO dnf5 needs-restarting -s 2>/dev/null || true)
+    SERVICES_TO_RESTART=$(dnf5 needs-restarting -s 2>/dev/null || true)
     [ -n "$SERVICES_TO_RESTART" ] && echo -e "${YELLOW}Services running outdated libraries (consider restarting):${NC}\n${CYAN}$SERVICES_TO_RESTART${NC}"
 elif command -v dnf &> /dev/null && command -v needs-restarting &> /dev/null; then
-    SERVICES_TO_RESTART=$($SUDO dnf needs-restarting -s 2>/dev/null || true)
+    SERVICES_TO_RESTART=$(dnf needs-restarting -s 2>/dev/null || true)
     [ -n "$SERVICES_TO_RESTART" ] && echo -e "${YELLOW}Services running outdated libraries (consider restarting):${NC}\n${CYAN}$SERVICES_TO_RESTART${NC}"
 elif command -v needrestart &> /dev/null; then
     echo -e "${BLUE}Auditing running services with needrestart...${NC}"
-    $SUDO needrestart -b 2>/dev/null || true
+    needrestart -b 2>/dev/null || true
 fi
 
-REBOOT_NEEDED=false
+REBOOT_STATUS="no" # yes | no | unknown
+REBOOT_REASON=""
 case "$PACKAGE_MANAGER" in
     "apt")
         if [ -f /var/run/reboot-required ]; then
-            REBOOT_NEEDED=true
-            REBOOT_REASON_PKGS=$(cat /var/run/reboot-required.pkgs 2>/dev/null)
+            REBOOT_STATUS="yes"
+            REBOOT_REASON=$(cat /var/run/reboot-required.pkgs 2>/dev/null)
         fi
         ;;
     "dnf5" | "dnf")
+        # The output is checked rather than the exit code, which is also non-zero when the
+        # needs-restarting plugin is missing.
         if command -v dnf5 &> /dev/null; then
-            if $SUDO dnf5 needs-restarting -r > /dev/null 2>&1; then
-                :
-            else
-                REBOOT_NEEDED=true
-            fi
+            NEEDS_RESTARTING=$(dnf5 needs-restarting -r 2>&1)
+        elif command -v needs-restarting &> /dev/null; then
+            NEEDS_RESTARTING=$(needs-restarting -r 2>&1)
         else
-            if ! command -v needs-restarting &> /dev/null; then
-                echo -e "${YELLOW}'needs-restarting' command not found. Attempting to install 'dnf-utils'...${NC}"
-                $SUDO dnf install -y dnf-utils >/dev/null 2>&1
-            fi
-            if command -v needs-restarting &> /dev/null; then
-                if $SUDO needs-restarting -r > /dev/null 2>&1; then
-                    :
-                else
-                    REBOOT_NEEDED=true
-                fi
-            fi
+            NEEDS_RESTARTING=$(dnf needs-restarting -r 2>&1)
+        fi
+        if echo "$NEEDS_RESTARTING" | grep -qi "reboot is required"; then
+            REBOOT_STATUS="yes"
+        elif ! echo "$NEEDS_RESTARTING" | grep -qi "no core libraries or services have been updated"; then
+            REBOOT_STATUS="unknown"
+            REBOOT_REASON="'needs-restarting' is not available (install dnf5-plugins, or dnf-plugins-core on dnf4)."
         fi
         ;;
     "zypper")
-        if $SUDO zypper ps -s 2>/dev/null | grep -qi "reboot"; then
-            REBOOT_NEEDED=true
-        fi
+        # Exit code 102 means a reboot is needed.
+        zypper needs-rebooting >/dev/null 2>&1
+        case $? in
+            102) REBOOT_STATUS="yes" ;;
+            0) ;;
+            *)
+                if zypper ps -s 2>/dev/null | grep -qi "reboot"; then
+                    REBOOT_STATUS="yes"
+                fi
+                ;;
+        esac
         ;;
     "rpm-ostree")
         if rpm-ostree status | grep -q -E "(pending)|Staged: yes"; then
-            REBOOT_NEEDED=true
+            REBOOT_STATUS="yes"
         fi
         ;;
     "transactional-update")
         if [ -n "$SYSTEM_UPDATES" ]; then
-            REBOOT_NEEDED=true
+            REBOOT_STATUS="yes"
         fi
         ;;
     "pacman" | "apk")
-        if [ ! -d "/usr/lib/modules/$(uname -r)" ] && [ -d "/usr/lib/modules" ]; then
-            REBOOT_NEEDED=true
-        else
-            echo -e "${YELLOW}Reboot check not automated for this package manager. Please reboot manually if a kernel was updated.${NC}"
+        # A kernel upgrade removes the running kernel's modules. /lib/modules covers Alpine,
+        # where modules are not under /usr/lib.
+        if ! compgen -G "/lib/modules/*/kernel" > /dev/null; then
+            REBOOT_STATUS="unknown"
+            REBOOT_REASON="No kernel modules found in /lib/modules (container or custom kernel?)."
+        elif [ ! -d "/lib/modules/$(uname -r)/kernel" ]; then
+            REBOOT_STATUS="yes"
+            REBOOT_REASON="The running kernel ($(uname -r)) has been replaced by an update."
         fi
         ;;
     "nixos")
-        echo -e "${YELLOW}Reboot check not automated for this package manager. Please reboot manually if a kernel was updated.${NC}"
+        for component in kernel initrd kernel-modules; do
+            if [ "$(readlink -f "/run/booted-system/$component")" != "$(readlink -f "/run/current-system/$component")" ]; then
+                REBOOT_STATUS="yes"
+                REBOOT_REASON="The booted system's $component differs from the current system."
+                break
+            fi
+        done
+        ;;
+    *)
+        REBOOT_STATUS="unknown"
         ;;
 esac
 
-if [ "$REBOOT_NEEDED" = true ]; then
-    echo -e "${YELLOW}A system reboot is required to complete the updates.${NC}"
-    [ -n "$REBOOT_REASON_PKGS" ] && echo -e "${YELLOW}Packages requiring reboot:${NC}\n${CYAN}$REBOOT_REASON_PKGS${NC}"
-else
-    echo -e "${GREEN}No reboot is required.${NC}"
-fi
+case "$REBOOT_STATUS" in
+    "yes")
+        echo -e "${YELLOW}A system reboot is required to complete the updates.${NC}"
+        [ -n "$REBOOT_REASON" ] && echo -e "${YELLOW}Reason:${NC}\n${CYAN}$REBOOT_REASON${NC}"
+        ;;
+    "unknown")
+        echo -e "${YELLOW}Could not determine whether a reboot is required. Please reboot if the kernel or core libraries were updated.${NC}"
+        [ -n "$REBOOT_REASON" ] && echo -e "${YELLOW}$REBOOT_REASON${NC}"
+        ;;
+    *)
+        echo -e "${GREEN}No reboot is required.${NC}"
+        ;;
+esac
 
 echo ""
 echo -e "${MAGENTA}--- Cleaning up system ---${NC}"
 
-# Old Kernel Cleanup (Debian-based systems)
-if [ "$PACKAGE_MANAGER" = "apt" ]; then
-    echo -e "${BLUE}Checking for old kernels to remove...${NC}"
-    # Get the running kernel version and highest installed kernel version to prevent purging newly upgraded kernels
-    CURRENT_KERNEL=$(uname -r)
-    LATEST_KERNEL=$(dpkg-query -W -f='${Package}\n' 'linux-image-[0-9]*' 2>/dev/null | grep -E '^linux-image-[0-9]' | sed 's/linux-image-//' | sort -V | tail -n 1)
-    
-    # Find all installed kernel packages (state 'ii'), excluding running and newest kernel
-    mapfile -t OLD_KERNELS < <(dpkg --list | grep -E '^\s*ii\s+linux-(image|headers)-[0-9]+' | awk '{ print $2 }' | grep -vF "$CURRENT_KERNEL" | { if [ -n "$LATEST_KERNEL" ]; then grep -vF "$LATEST_KERNEL"; else cat; fi; })
-
-    if [ ${#OLD_KERNELS[@]} -gt 0 ]; then
-        echo -e "${YELLOW}Found old kernel packages that can be removed:${NC}"
-        printf "${CYAN}%s${NC}\n" "${OLD_KERNELS[@]}"
-        echo -e "${YELLOW}Do you want to remove these old kernels? (y/n)${NC}"
-        RESPONSE_IS_YES=false
-        if [ -t 1 ]; then
-            read -r response < /dev/tty
-            if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-                RESPONSE_IS_YES=true
+# Autoremove unnecessary packages. On Debian/Ubuntu this also removes old kernels, keeping
+# the running one plus the newest and previous ones as fallbacks.
+autoremove_packages() {
+    case "$PACKAGE_MANAGER" in
+        "apt")
+            DEBIAN_FRONTEND=noninteractive apt-get autoremove -y
+            ;;
+        "dnf5")
+            dnf5 autoremove -y
+            ;;
+        "dnf")
+            dnf autoremove -y
+            ;;
+        "pacman")
+            local orphans
+            mapfile -t orphans < <(pacman -Qdtq)
+            if [ ${#orphans[@]} -gt 0 ]; then
+                pacman -Rns --noconfirm "${orphans[@]}"
+            else
+                echo "No orphaned packages to remove."
             fi
-        else
-            echo -e "${YELLOW}Non-interactive mode detected. Skipping old kernel removal.${NC}"
-        fi
+            ;;
+        "apk")
+            echo "apk does not have a direct 'autoremove' equivalent."
+            ;;
+        "zypper")
+            echo "zypper manages dependencies automatically during upgrades."
+            ;;
+        "xbps")
+            xbps-remove -Oo 2>/dev/null || true
+            vkpurge rm all 2>/dev/null || true
+            ;;
+        "emerge")
+            emerge --depclean 2>/dev/null || true
+            eclean-dist 2>/dev/null || true
+            ;;
+        "eopkg")
+            eopkg rmo 2>/dev/null || true
+            ;;
+        "swupd")
+            swupd clean 2>/dev/null || true
+            ;;
+        "guix")
+            guix gc 2>/dev/null || true
+            ;;
+        "rpm-ostree")
+            echo "rpm-ostree images are managed atomically. No autoremove required."
+            ;;
+        "transactional-update")
+            echo "Transactional snapshots will be cleaned up during the next phase."
+            ;;
+        "nixos")
+            nix-collect-garbage -d || return
+            echo -e "${BLUE}Optimizing Nix store...${NC}"
+            nix-store --optimise
+            ;;
+    esac
+}
 
-        if [ "$RESPONSE_IS_YES" = true ]; then
-            echo -e "${BLUE}Removing old kernels...${NC}"
-            $SUDO apt-get purge -y "${OLD_KERNELS[@]}"
-            echo -e "${GREEN}Old kernels removed.${NC}"
-        else
-            echo -e "${YELLOW}Skipping old kernel removal.${NC}"
-        fi
-    else
-        echo -e "${GREEN}No old kernels found to remove.${NC}"
-    fi
-fi
+clean_package_cache() {
+    case "$PACKAGE_MANAGER" in
+        "apt")
+            apt-get clean
+            ;;
+        "dnf5")
+            dnf5 clean all
+            ;;
+        "dnf")
+            dnf clean all
+            ;;
+        "pacman")
+            if command -v paccache &> /dev/null; then
+                echo -e "${BLUE}Cleaning pacman cache retaining last 3 versions (paccache)...${NC}"
+                paccache -r >/dev/null 2>&1 || true
+            else
+                pacman -Sc --noconfirm
+            fi
+            ;;
+        "apk")
+            apk cache purge 2>/dev/null || apk cache clean
+            ;;
+        "zypper")
+            zypper clean -a
+            ;;
+        "rpm-ostree")
+            rpm-ostree cleanup -m
+            ;;
+        "transactional-update")
+            transactional-update cleanup
+            ;;
+        "nixos")
+            echo "NixOS store optimize complete."
+            ;;
+    esac
+}
 
-# Autoremove unnecessary packages
 echo -e "${BLUE}Removing unnecessary packages...${NC}"
-case "$PACKAGE_MANAGER" in
-    "apt")
-        $SUDO DEBIAN_FRONTEND=noninteractive apt-get autoremove -y
-        ;;
-    "dnf5")
-        $SUDO dnf5 autoremove -y
-        ;;
-    "dnf")
-        $SUDO dnf autoremove -y
-        ;;
-    "pacman")
-        if [[ -n $($SUDO pacman -Qdtq) ]]; then
-            $SUDO pacman -Qdtq | xargs $SUDO pacman -Rns --noconfirm
-        else
-            echo "No orphaned packages to remove."
-        fi
-        ;;
-    "apk")
-        echo "apk does not have a direct 'autoremove' equivalent."
-        ;;
-    "zypper")
-        echo "zypper manages dependencies automatically during upgrades."
-        ;;
-    "xbps")
-        $SUDO xbps-remove -Oo 2>/dev/null || true
-        $SUDO vkpurge rm all 2>/dev/null || true
-        ;;
-    "emerge")
-        $SUDO emerge --depclean 2>/dev/null || true
-        $SUDO eclean-dist 2>/dev/null || true
-        ;;
-    "eopkg")
-        $SUDO eopkg rmo 2>/dev/null || true
-        ;;
-    "swupd")
-        $SUDO swupd clean 2>/dev/null || true
-        ;;
-    "guix")
-        guix gc 2>/dev/null || true
-        ;;
-    "rpm-ostree")
-        echo "rpm-ostree images are managed atomically. No autoremove required."
-        ;;
-    "transactional-update")
-        echo "Transactional snapshots will be cleaned up during the next phase."
-        ;;
-    "nixos")
-        $SUDO nix-collect-garbage -d
-        echo -e "${BLUE}Optimizing Nix store...${NC}"
-        $SUDO nix-store --optimise
-        ;;
-esac
-echo -e "${GREEN}Done!${NC}"
+autoremove_packages
+finish_step "Removing unnecessary packages" $?
 
-# Clean package cache & disabled snaps
 echo -e "${BLUE}Clearing package cache...${NC}"
-case "$PACKAGE_MANAGER" in
-    "apt")
-        $SUDO apt-get clean
-        ;;
-    "dnf5")
-        $SUDO dnf5 clean all
-        ;;
-    "dnf")
-        $SUDO dnf clean all
-        ;;
-    "pacman")
-        if command -v paccache &> /dev/null; then
-            echo -e "${BLUE}Cleaning pacman cache retaining last 3 versions (paccache)...${NC}"
-            $SUDO paccache -r >/dev/null 2>&1 || true
-        else
-            $SUDO pacman -Sc --noconfirm
-        fi
-        ;;
-    "apk")
-        $SUDO apk cache purge 2>/dev/null || $SUDO apk cache clean
-        ;;
-    "zypper")
-        $SUDO zypper clean -a
-        ;;
-    "rpm-ostree")
-        $SUDO rpm-ostree cleanup -m
-        ;;
-    "transactional-update")
-        $SUDO transactional-update cleanup
-        ;;
-    "nixos")
-        echo "NixOS store optimize complete."
-        ;;
-esac
+clean_package_cache
+finish_step "Clearing package cache" $?
 
 # Clean disabled Snap revisions
 if command -v snap &> /dev/null; then
     echo -e "${BLUE}Checking for disabled Snap revisions to clean up...${NC}"
-    DISABLED_SNAPS=$($SUDO snap list --all 2>/dev/null | awk '/disabled/{print $1, $3}')
+    DISABLED_SNAPS=$(snap list --all 2>/dev/null | awk '/disabled/{print $1, $3}')
     if [ -n "$DISABLED_SNAPS" ]; then
         echo "$DISABLED_SNAPS" | while read -r snapname revision; do
-            [ -n "$snapname" ] && [ -n "$revision" ] && $SUDO snap remove "$snapname" --revision="$revision" >/dev/null 2>&1 || true
+            [ -n "$snapname" ] && [ -n "$revision" ] && snap remove "$snapname" --revision="$revision" >/dev/null 2>&1 || true
         done
         echo -e "${GREEN}Disabled Snap revisions cleaned.${NC}"
     fi
 fi
-echo -e "${GREEN}Done!${NC}"
 
 echo ""
 echo -e "${MAGENTA}--- Systemd Service Status Audit ---${NC}"
@@ -1121,21 +1172,21 @@ case "$PACKAGE_MANAGER" in
         # First, try the Ubuntu/Ubuntu-like method silently
         if command -v do-release-upgrade &> /dev/null; then
             echo -e "${BLUE}Checking for a new distribution release (do-release-upgrade)...${NC}"
-            UPGRADE_CHECK=$($SUDO do-release-upgrade -c 2>&1)
+            UPGRADE_CHECK=$(do-release-upgrade -c 2>&1)
             if echo "$UPGRADE_CHECK" | grep -q "New release"; then
                 RELEASE_INFO=$(echo "$UPGRADE_CHECK" | grep "New release")
                 echo -e "${YELLOW}A new distribution release is available: $RELEASE_INFO${NC}"
                 echo -e "${YELLOW}To upgrade, run the following command:${NC}"
-                echo -e "${CYAN}$SUDO do-release-upgrade${NC}"
+                echo -e "${CYAN}sudo do-release-upgrade${NC}"
                 UPGRADE_FOUND=true
             fi
         fi
-        
+
         # If the first method didn't find anything, try the Debian/dist-upgrade method
         if [ "$UPGRADE_FOUND" = false ]; then
             echo -e "${BLUE}Checking for major package changes (apt dist-upgrade)...${NC}"
-            DIST_UPGRADE_CHECK=$($SUDO apt -s dist-upgrade 2>&1)
-            
+            DIST_UPGRADE_CHECK=$(apt-get -s dist-upgrade 2>&1)
+
             if echo "$DIST_UPGRADE_CHECK" | grep -q "upgraded, .* newly installed, .* to remove"; then
                 SUMMARY=$(echo "$DIST_UPGRADE_CHECK" | grep "upgraded, .* newly installed, .* to remove")
                 # Check if the summary line actually contains non-zero numbers
@@ -1143,7 +1194,7 @@ case "$PACKAGE_MANAGER" in
                     echo -e "${YELLOW}A distribution upgrade or major package change may be available.${NC}"
                     echo -e "${YELLOW}Summary: $SUMMARY${NC}"
                     echo -e "${YELLOW}To apply these changes, review them carefully and then run:${NC}"
-                    echo -e "${CYAN}$SUDO apt full-upgrade${NC}"
+                    echo -e "${CYAN}sudo apt full-upgrade${NC}"
                     UPGRADE_FOUND=true
                 fi
             fi
@@ -1154,20 +1205,20 @@ case "$PACKAGE_MANAGER" in
             echo -e "${GREEN}Your distribution is up to date. No new release or major changes found.${NC}"
         fi
         ;;
-    "dnf")
-        echo -e "${BLUE}For Fedora-based systems, distribution upgrades are done using the 'dnf-plugin-system-upgrade' plugin.${NC}"
+    "dnf5" | "dnf")
+        echo -e "${BLUE}For Fedora-based systems, distribution upgrades are done using the 'system-upgrade' command.${NC}"
         echo -e "${BLUE}To upgrade, you would typically run a command like:${NC}"
-        echo -e "${CYAN}$SUDO dnf system-upgrade download --releasever=<version>${NC}"
+        echo -e "${CYAN}sudo dnf system-upgrade download --releasever=<version>${NC}"
         echo -e "${BLUE}Please consult your distribution's official documentation for the correct version number and instructions.${NC}"
         ;;
     "pacman")
         echo -e "${BLUE}Your system uses a rolling release model.${NC}"
-        echo -e "${BLUE}Regular updates using '$SUDO pacman -Syu' keep your system on the latest version.${NC}"
+        echo -e "${BLUE}Regular updates using 'sudo pacman -Syu' keep your system on the latest version.${NC}"
         echo -e "${GREEN}Your distribution is continuously up to date.${NC}"
         ;;
     "apk")
         echo -e "${BLUE}Your system uses a rolling release model.${NC}"
-        echo -e "${BLUE}Regular updates using '$SUDO apk upgrade' keep your system on the latest version.${NC}"
+        echo -e "${BLUE}Regular updates using 'sudo apk upgrade' keep your system on the latest version.${NC}"
         echo -e "${BLUE}Major version upgrades for Alpine Linux typically involve manual changes to /etc/apk/repositories.${NC}"
         echo -e "${GREEN}Your distribution is continuously up to date.${NC}"
         ;;
@@ -1191,40 +1242,44 @@ fi
 
 echo ""
 echo -e "${MAGENTA}--- Clearing Old Logs & Coredumps ---${NC}"
-if command -v journalctl &> /dev/null; then
-    echo -e "${BLUE}Using journalctl to clear logs older than 10 days or exceeding 500MB...${NC}"
-    $SUDO journalctl --vacuum-time=10d --vacuum-size=500M 2>/dev/null || true
-else
-    echo -e "${YELLOW}Warning: 'journalctl' not found. Using 'find' to clear logs from /var/log.${NC}"
-    echo -e "${BLUE}Clearing .log and .gz files older than 10 days from /var/log...${NC}"
-    $SUDO find /var/log -type f -name "*.log" -mtime +10 -delete
-    $SUDO find /var/log -type f -name "*.gz" -mtime +10 -delete
-fi
+if ask_yes_no "Do you want to clear logs and crash dumps older than 10 days?" n; then
+    if command -v journalctl &> /dev/null; then
+        echo -e "${BLUE}Using journalctl to clear logs older than 10 days or exceeding 500MB...${NC}"
+        journalctl --vacuum-time=10d --vacuum-size=500M 2>/dev/null || true
+    else
+        echo -e "${YELLOW}Warning: 'journalctl' not found. Using 'find' to clear logs from /var/log.${NC}"
+        echo -e "${BLUE}Clearing .log and .gz files older than 10 days from /var/log...${NC}"
+        find /var/log -type f -name "*.log" -mtime +10 -delete
+        find /var/log -type f -name "*.gz" -mtime +10 -delete
+    fi
 
-# Clean coredumps & crash reports
-if [ -d /var/crash ] || [ -d /var/lib/systemd/coredump ]; then
-    echo -e "${BLUE}Clearing crash dumps older than 10 days...${NC}"
-    $SUDO find /var/crash /var/lib/systemd/coredump -type f -mtime +10 -delete 2>/dev/null || true
+    # Clean coredumps & crash reports
+    if [ -d /var/crash ] || [ -d /var/lib/systemd/coredump ]; then
+        echo -e "${BLUE}Clearing crash dumps older than 10 days...${NC}"
+        find /var/crash /var/lib/systemd/coredump -type f -mtime +10 -delete 2>/dev/null || true
+    fi
+    echo -e "${GREEN}Old logs cleared.${NC}"
+else
+    echo -e "${YELLOW}Skipping log and crash dump cleanup.${NC}"
 fi
-echo -e "${GREEN}Old logs cleared.${NC}"
 
 echo ""
 echo -e "${MAGENTA}--- Firmware Update Check ---${NC}"
 if command -v fwupdmgr &> /dev/null; then
     echo -n -e "${BLUE}Refreshing firmware metadata...${NC}"
-    ($SUDO fwupdmgr refresh --force) >/dev/null 2>&1 &
+    fwupdmgr refresh --force >/dev/null 2>&1 &
     spinner $!
     echo -e "${GREEN}Done!${NC}"
-    
+
     echo -e "${BLUE}Checking for firmware updates...${NC}"
-    FIRMWARE_UPDATES=$($SUDO fwupdmgr get-updates 2>&1)
-    
+    FIRMWARE_UPDATES=$(fwupdmgr get-updates 2>&1)
+
     if echo "$FIRMWARE_UPDATES" | grep -q "No updatable devices" || echo "$FIRMWARE_UPDATES" | grep -q "No updates available"; then
         echo -e "${GREEN}No firmware updates available.${NC}"
     else
         echo -e "${YELLOW}Firmware updates available:${NC}"
         echo -e "${CYAN}$FIRMWARE_UPDATES${NC}"
-        echo -e "${YELLOW}To apply these updates, run '$SUDO fwupdmgr update'.${NC}"
+        echo -e "${YELLOW}To apply these updates, run 'sudo fwupdmgr update'.${NC}"
     fi
 else
     echo -e "${YELLOW}fwupdmgr not found. Skipping firmware update check.${NC}"
@@ -1234,78 +1289,71 @@ fi
 echo ""
 echo -e "${MAGENTA}--- Open Ports on System ---${NC}"
 
-# Check for lsof and install if the user consents
-LSOF_INSTALL_SUCCESS=false
-if ! command -v lsof &> /dev/null; then
-    echo -e "${YELLOW}'lsof' command not found.${NC}"
-    
-    RESPONSE_IS_YES=false
-    if [ -t 1 ]; then
-        echo -e "${YELLOW}Would you like to install 'lsof' to list open ports? (y/n)${NC}"
-        read -r response < /dev/tty
-        if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-            RESPONSE_IS_YES=true
-        fi
-    else
-        echo -e "${YELLOW}Non-interactive mode detected. Skipping 'lsof' installation.${NC}"
-    fi
-
-    if [ "$RESPONSE_IS_YES" = true ]; then
+# ss ships with iproute2 on virtually every system; lsof is only needed without it.
+PORT_TOOL=""
+if command -v ss &> /dev/null; then
+    PORT_TOOL="ss"
+elif command -v lsof &> /dev/null; then
+    PORT_TOOL="lsof"
+else
+    echo -e "${YELLOW}Neither 'ss' nor 'lsof' found.${NC}"
+    if ask_yes_no "Would you like to install 'lsof' to list open ports?" n; then
         echo -e "${BLUE}Attempting to install 'lsof'...${NC}"
         case "$PACKAGE_MANAGER" in
             "apt")
-                $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y lsof
+                DEBIAN_FRONTEND=noninteractive apt-get install -y lsof
                 ;;
             "dnf5")
-                $SUDO dnf5 install -y lsof
+                dnf5 install -y lsof
                 ;;
             "dnf")
-                $SUDO dnf install -y lsof
+                dnf install -y lsof
                 ;;
             "pacman")
-                $SUDO pacman -S --noconfirm lsof
+                pacman -S --noconfirm lsof
                 ;;
             "apk")
-                $SUDO apk add lsof
+                apk add lsof
                 ;;
             "zypper")
-                $SUDO zypper --non-interactive in lsof
+                zypper --non-interactive in lsof
                 ;;
             *)
                 echo -e "${YELLOW}Automatic installation of 'lsof' is not supported for $PACKAGE_MANAGER.${NC}"
                 ;;
         esac
         # Verify lsof installation
-        if ! command -v lsof &> /dev/null; then
-            echo -e "${RED}Failed to install 'lsof'. Falling back to alternative port listing tools.${NC}"
-            LSOF_INSTALL_SUCCESS=false
+        if command -v lsof &> /dev/null; then
+            PORT_TOOL="lsof"
         else
-            LSOF_INSTALL_SUCCESS=true
+            echo -e "${RED}Failed to install 'lsof'. Falling back to alternative port listing tools.${NC}"
         fi
-    else
-        LSOF_INSTALL_SUCCESS=false
     fi
-else
-    # lsof was found initially, confirm success
-    LSOF_INSTALL_SUCCESS=true
 fi
 
-# Now, list the ports
-if [ "$LSOF_INSTALL_SUCCESS" = true ]; then
+if [ "$PORT_TOOL" = "ss" ]; then
+    echo -e "${BLUE}Listing listening TCP and UDP ports with ss...${NC}"
+    ss -tulpn
+elif [ "$PORT_TOOL" = "lsof" ]; then
     echo -e "${BLUE}Listing listening TCP and UDP ports with lsof...${NC}"
-    $SUDO lsof -i -P -n | grep -E 'COMMAND|LISTEN|UDP'
-elif command -v ss &> /dev/null; then
-    echo -e "${BLUE}lsof not found. Using 'ss' to list listening TCP and UDP ports...${NC}"
-    $SUDO ss -tuln
+    lsof -i -P -n | grep -E 'COMMAND|LISTEN|UDP'
 elif command -v netstat &> /dev/null; then
-    echo -e "${BLUE}lsof and ss not found. Using 'netstat' to list listening TCP and UDP ports...${NC}"
-    $SUDO netstat -tuln
+    echo -e "${BLUE}ss and lsof not found. Using 'netstat' to list listening TCP and UDP ports...${NC}"
+    netstat -tulpn
 else
-    echo -e "${RED}Error: Could not find lsof, ss, or netstat. Cannot display open ports.${NC}"
+    echo -e "${RED}Error: Could not find ss, lsof, or netstat. Cannot display open ports.${NC}"
 fi
 
 echo ""
-echo -e "${GREEN}=====================================${NC}"
-echo -e "${GREEN} All updates completed successfully! ${NC}"
-echo -e "${GREEN}=====================================${NC}"
-exit 0
+if [ ${#FAILURES[@]} -eq 0 ]; then
+    echo -e "${GREEN}=====================================${NC}"
+    echo -e "${GREEN} All updates completed successfully! ${NC}"
+    echo -e "${GREEN}=====================================${NC}"
+    exit 0
+fi
+
+echo -e "${RED}=====================================${NC}"
+echo -e "${RED} Finished with ${#FAILURES[@]} failed step(s):${NC}"
+printf "${RED} - %s${NC}\n" "${FAILURES[@]}"
+echo -e "${RED}=====================================${NC}"
+exit 1
